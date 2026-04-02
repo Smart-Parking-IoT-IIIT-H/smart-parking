@@ -30,7 +30,7 @@ const char* MQTT_CLIENT = "esp32-smartpark-01";
 //                        S1   S2
 const int TRIG[]  = {  5,   4 };
 const int ECHO[]  = { 18,  34 };
-const int IR[]    = { 19,  17 };
+const int IR[]    = { 19,  35 };
 const int LED_R[] = { 25,  14 };
 const int LED_G[] = { 26,  12 };
 const int LED_B[] = { 27,  13 };
