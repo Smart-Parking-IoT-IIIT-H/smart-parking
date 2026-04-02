@@ -1,0 +1,773 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>SmartPark — Live Monitoring</title>
+  <link rel="manifest" href="#" />
+  <meta name="theme-color" content="#0a0f1a"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow+Condensed:wght@300;400;600;700&display=swap" rel="stylesheet"/>
+
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
+
+  <!-- Chart.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+
+  <style>
+    :root {
+      --bg:       #07090f;
+      --surface:  #0d1220;
+      --border:   #1c2540;
+      --accent:   #00e5ff;
+      --free:     #00e676;
+      --occupied: #ff1744;
+      --warn:     #ffd600;
+      --muted:    #3a4560;
+      --text:     #ccd6f6;
+      --dim:      #6272a4;
+      --mono:     'Share Tech Mono', monospace;
+      --sans:     'Barlow Condensed', sans-serif;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ── GRID NOISE BACKGROUND ── */
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background-image:
+        linear-gradient(rgba(0,229,255,.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,229,255,.03) 1px, transparent 1px);
+      background-size: 40px 40px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* ── HEADER ── */
+    header {
+      position: relative;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      background: rgba(13,18,32,.95);
+      backdrop-filter: blur(12px);
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: .75rem;
+    }
+
+    .logo-icon {
+      width: 36px; height: 36px;
+      border: 2px solid var(--accent);
+      border-radius: 6px;
+      display: flex; align-items: center; justify-content: center;
+      font-family: var(--mono);
+      font-size: .9rem;
+      color: var(--accent);
+      text-shadow: 0 0 8px var(--accent);
+      box-shadow: 0 0 12px rgba(0,229,255,.2);
+    }
+
+    .logo-text {
+      font-size: 1.4rem;
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: #fff;
+    }
+    .logo-text span { color: var(--accent); }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 1.2rem;
+    }
+
+    .heartbeat {
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+      font-family: var(--mono);
+      font-size: .72rem;
+      color: var(--dim);
+    }
+
+    .hb-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--free);
+      box-shadow: 0 0 8px var(--free);
+      animation: pulse 1.4s ease-in-out infinite;
+    }
+    .hb-dot.offline { background: var(--occupied); box-shadow: 0 0 8px var(--occupied); animation: none; }
+
+    @keyframes pulse {
+      0%,100% { opacity: 1; transform: scale(1); }
+      50% { opacity: .5; transform: scale(.7); }
+    }
+
+    .live-tag {
+      font-family: var(--mono);
+      font-size: .65rem;
+      letter-spacing: .1em;
+      background: rgba(0,230,118,.12);
+      color: var(--free);
+      border: 1px solid rgba(0,230,118,.3);
+      padding: .2rem .55rem;
+      border-radius: 3px;
+    }
+
+    /* ── MAIN LAYOUT ── */
+    main {
+      position: relative;
+      z-index: 1;
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 1.5rem 1rem 3rem;
+      display: grid;
+      gap: 1.2rem;
+    }
+
+    /* ── FREE SLOTS HERO ── */
+    .hero {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.5rem 2rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero::after {
+      content: '';
+      position: absolute;
+      right: -40px; top: -40px;
+      width: 180px; height: 180px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(0,229,255,.08), transparent 70%);
+      pointer-events: none;
+    }
+
+    .hero-label {
+      font-size: .8rem;
+      font-weight: 600;
+      letter-spacing: .2em;
+      text-transform: uppercase;
+      color: var(--dim);
+      margin-bottom: .3rem;
+    }
+
+    .hero-count {
+      font-family: var(--mono);
+      font-size: 4rem;
+      line-height: 1;
+      color: var(--accent);
+      text-shadow: 0 0 24px rgba(0,229,255,.4);
+      transition: color .4s;
+    }
+    .hero-count.zero { color: var(--occupied); text-shadow: 0 0 24px rgba(255,23,68,.4); }
+
+    .hero-sub {
+      font-size: 1rem;
+      color: var(--dim);
+      margin-top: .4rem;
+    }
+
+    .hero-bar {
+      flex: 1;
+      max-width: 260px;
+    }
+
+    .bar-track {
+      height: 10px;
+      background: var(--border);
+      border-radius: 99px;
+      overflow: hidden;
+      margin-bottom: .5rem;
+    }
+
+    .bar-fill {
+      height: 100%;
+      border-radius: 99px;
+      background: var(--free);
+      box-shadow: 0 0 10px var(--free);
+      transition: width .6s cubic-bezier(.4,0,.2,1), background .4s;
+    }
+    .bar-fill.danger { background: var(--occupied); box-shadow: 0 0 10px var(--occupied); }
+    .bar-fill.warn   { background: var(--warn);     box-shadow: 0 0 10px var(--warn); }
+
+    .bar-labels {
+      display: flex;
+      justify-content: space-between;
+      font-family: var(--mono);
+      font-size: .68rem;
+      color: var(--dim);
+    }
+
+    /* ── SLOT GRID ── */
+    .section-title {
+      font-size: .75rem;
+      font-weight: 600;
+      letter-spacing: .2em;
+      text-transform: uppercase;
+      color: var(--dim);
+      margin-bottom: .8rem;
+    }
+
+    .slots-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: .8rem;
+    }
+
+    @media (max-width: 540px) {
+      .slots-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    .slot-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.1rem .8rem 1rem;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+      transition: border-color .4s, box-shadow .4s;
+      cursor: default;
+    }
+
+    .slot-card.free {
+      border-color: rgba(0,230,118,.35);
+      box-shadow: 0 0 18px rgba(0,230,118,.08);
+    }
+    .slot-card.occupied {
+      border-color: rgba(255,23,68,.35);
+      box-shadow: 0 0 18px rgba(255,23,68,.08);
+    }
+    .slot-card.error {
+      border-color: rgba(255,214,0,.5);
+      box-shadow: 0 0 18px rgba(255,214,0,.1);
+    }
+
+    .slot-card::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      transition: opacity .4s;
+    }
+    .slot-card.free::before     { background: linear-gradient(135deg, rgba(0,230,118,.06), transparent); opacity: 1; }
+    .slot-card.occupied::before { background: linear-gradient(135deg, rgba(255,23,68,.06), transparent); opacity: 1; }
+
+    .slot-number {
+      font-family: var(--mono);
+      font-size: .65rem;
+      color: var(--dim);
+      letter-spacing: .1em;
+      margin-bottom: .6rem;
+    }
+
+    .slot-icon {
+      width: 56px; height: 56px;
+      margin: 0 auto .8rem;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.6rem;
+      transition: background .4s, box-shadow .4s;
+    }
+
+    .slot-card.free .slot-icon {
+      background: rgba(0,230,118,.12);
+      box-shadow: 0 0 14px rgba(0,230,118,.15);
+    }
+    .slot-card.occupied .slot-icon {
+      background: rgba(255,23,68,.12);
+      box-shadow: 0 0 14px rgba(255,23,68,.15);
+    }
+    .slot-card.error .slot-icon {
+      background: rgba(255,214,0,.12);
+    }
+
+    .slot-status {
+      font-size: .95rem;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .slot-card.free     .slot-status { color: var(--free); }
+    .slot-card.occupied .slot-status { color: var(--occupied); }
+    .slot-card.error    .slot-status { color: var(--warn); font-size: .75rem; }
+
+    .slot-time {
+      font-family: var(--mono);
+      font-size: .62rem;
+      color: var(--muted);
+      margin-top: .4rem;
+    }
+
+    /* ── DUAL SENSOR BADGE ── */
+    .sensor-badges {
+      display: flex;
+      justify-content: center;
+      gap: .3rem;
+      margin-top: .5rem;
+    }
+    .badge {
+      font-size: .55rem;
+      font-family: var(--mono);
+      padding: .1rem .3rem;
+      border-radius: 3px;
+      border: 1px solid var(--border);
+      color: var(--dim);
+    }
+    .badge.active { border-color: var(--free); color: var(--free); }
+    .badge.triggered { border-color: var(--occupied); color: var(--occupied); }
+
+    /* ── STATS ROW ── */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: .8rem;
+    }
+
+    @media (max-width: 480px) {
+      .stats-row { grid-template-columns: 1fr 1fr; }
+      .stats-row .stat-card:last-child { grid-column: span 2; }
+    }
+
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem 1.2rem;
+    }
+
+    .stat-label {
+      font-size: .7rem;
+      font-weight: 600;
+      letter-spacing: .15em;
+      text-transform: uppercase;
+      color: var(--dim);
+      margin-bottom: .4rem;
+    }
+
+    .stat-value {
+      font-family: var(--mono);
+      font-size: 1.7rem;
+      color: var(--accent);
+    }
+
+    .stat-unit {
+      font-size: .75rem;
+      color: var(--dim);
+      margin-left: .2rem;
+    }
+
+    /* ── CHART ── */
+    .chart-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.2rem 1.2rem 1rem;
+    }
+
+    .chart-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1rem;
+    }
+
+    .chart-wrap {
+      position: relative;
+      height: 160px;
+    }
+
+    /* ── ALERT BANNER ── */
+    .alert-banner {
+      display: none;
+      align-items: center;
+      gap: .8rem;
+      background: rgba(255,23,68,.1);
+      border: 1px solid rgba(255,23,68,.4);
+      border-radius: 8px;
+      padding: .75rem 1.2rem;
+      font-size: .9rem;
+      font-weight: 600;
+      letter-spacing: .05em;
+      color: #ff6b8a;
+    }
+    .alert-banner.show { display: flex; }
+    .alert-icon { font-size: 1.2rem; animation: flash 1s ease infinite; }
+    @keyframes flash { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+    /* ── FOOTER ── */
+    footer {
+      position: relative;
+      z-index: 1;
+      text-align: center;
+      padding: 1.5rem;
+      font-family: var(--mono);
+      font-size: .65rem;
+      color: var(--muted);
+      border-top: 1px solid var(--border);
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── HEADER ── -->
+<header>
+  <div class="logo">
+    <div class="logo-icon">SP</div>
+    <div class="logo-text">Smart<span>Park</span></div>
+  </div>
+  <div class="header-right">
+    <div class="heartbeat">
+      <div class="hb-dot" id="hbDot"></div>
+      <span id="hbLabel">LIVE</span>
+    </div>
+    <div class="live-tag">● LIVE</div>
+  </div>
+</header>
+
+<!-- ── MAIN ── -->
+<main>
+
+  <!-- ALERT BANNER -->
+  <div class="alert-banner" id="alertBanner">
+    <span class="alert-icon">⚠</span>
+    <span>ALL SLOTS OCCUPIED — Lot is full</span>
+  </div>
+
+  <!-- HERO FREE COUNT -->
+  <div class="hero">
+    <div>
+      <div class="hero-label">Slots Available</div>
+      <div class="hero-count" id="freeCount">—</div>
+      <div class="hero-sub">out of 4 total</div>
+    </div>
+    <div class="hero-bar">
+      <div class="bar-track">
+        <div class="bar-fill" id="barFill" style="width:0%"></div>
+      </div>
+      <div class="bar-labels">
+        <span>0 free</span>
+        <span id="barPct">—%</span>
+        <span>4 free</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLOT CARDS -->
+  <div>
+    <div class="section-title">Slot Status — Real-time</div>
+    <div class="slots-grid" id="slotsGrid">
+      <!-- generated by JS -->
+    </div>
+  </div>
+
+  <!-- STATS -->
+  <div class="stats-row">
+    <div class="stat-card">
+      <div class="stat-label">Avg Occupancy</div>
+      <div class="stat-value" id="statAvg">—<span class="stat-unit">%</span></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Vehicles Served</div>
+      <div class="stat-value" id="statServed">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Last Update</div>
+      <div class="stat-value" style="font-size:1.1rem" id="statTime">—</div>
+    </div>
+  </div>
+
+  <!-- OCCUPANCY CHART -->
+  <div class="chart-card">
+    <div class="chart-header">
+      <div class="section-title" style="margin:0">Occupancy History (last 20 readings)</div>
+    </div>
+    <div class="chart-wrap">
+      <canvas id="occupancyChart"></canvas>
+    </div>
+  </div>
+
+</main>
+
+<footer>
+  SmartPark Monitoring System &nbsp;·&nbsp; ESP32 + Firebase + HiveMQ &nbsp;·&nbsp; smart-parking-1df76
+</footer>
+
+<!-- ── SCRIPTS ── -->
+<script>
+// ═══════════════════════════════════════════
+//  FIREBASE CONFIG
+// ═══════════════════════════════════════════
+const firebaseConfig = {
+  apiKey: "AIzaSyA73-b9qGJdzO34u7gjFIkOSqqTKn8a76A",
+  authDomain: "smart-parking-1df76.firebaseapp.com",
+  databaseURL: "https://smart-parking-1df76-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "smart-parking-1df76",
+  storageBucket: "smart-parking-1df76.firebasestorage.app",
+  messagingSenderId: "448571319292",
+  appId: "1:448571319292:web:627000f798c7c42d658879"
+};
+
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
+// ═══════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════
+const state = {
+  slots: { 1: null, 2: null, 3: null, 4: null },
+  history: [],       // array of { time, occupiedCount }
+  vehiclesServed: 0,
+  lastHeartbeat: Date.now()
+};
+
+// ═══════════════════════════════════════════
+//  RENDER SLOT CARDS (initial)
+// ═══════════════════════════════════════════
+function buildSlotCards() {
+  const grid = document.getElementById('slotsGrid');
+  grid.innerHTML = '';
+  for (let i = 1; i <= 4; i++) {
+    grid.innerHTML += `
+      <div class="slot-card" id="slot${i}">
+        <div class="slot-number">SLOT ${i}</div>
+        <div class="slot-icon" id="slotIcon${i}">🅿</div>
+        <div class="slot-status" id="slotStatus${i}">—</div>
+        <div class="slot-time" id="slotTime${i}">waiting...</div>
+        <div class="sensor-badges">
+          <span class="badge" id="irBadge${i}">IR</span>
+          <span class="badge" id="usBadge${i}">US</span>
+        </div>
+      </div>`;
+  }
+}
+
+// ═══════════════════════════════════════════
+//  UPDATE A SINGLE SLOT
+// ═══════════════════════════════════════════
+function updateSlot(id, data) {
+  const prev = state.slots[id];
+  state.slots[id] = data;
+
+  // Count vehicles served (free→occupied transitions)
+  if (prev !== null && !prev.occupied && data.occupied) {
+    state.vehiclesServed++;
+    document.getElementById('statServed').textContent = state.vehiclesServed;
+  }
+
+  const card   = document.getElementById(`slot${id}`);
+  const icon   = document.getElementById(`slotIcon${id}`);
+  const status = document.getElementById(`slotStatus${id}`);
+  const time   = document.getElementById(`slotTime${id}`);
+  const irB    = document.getElementById(`irBadge${id}`);
+  const usB    = document.getElementById(`usBadge${id}`);
+
+  if (!card) return;
+
+  const isError = data.error;
+
+  card.className   = 'slot-card ' + (isError ? 'error' : data.occupied ? 'occupied' : 'free');
+  icon.textContent = isError ? '⚠' : data.occupied ? '🚗' : '🅿';
+  status.textContent = isError ? 'FAULT DETECTED' : data.occupied ? 'OCCUPIED' : 'FREE';
+
+  const ts = data.timestamp ? new Date(data.timestamp * 1000) : new Date();
+  time.textContent = ts.toLocaleTimeString('en-IN', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+
+  // Sensor badge indicators
+  if (data.ir !== undefined) {
+    irB.className = 'badge ' + (data.ir ? 'triggered' : 'active');
+  }
+  if (data.us !== undefined) {
+    usB.className = 'badge ' + (data.us ? 'triggered' : 'active');
+  }
+
+  updateHero();
+  state.lastHeartbeat = Date.now();
+}
+
+// ═══════════════════════════════════════════
+//  UPDATE HERO & BAR
+// ═══════════════════════════════════════════
+function updateHero() {
+  const slots = Object.values(state.slots).filter(s => s !== null);
+  if (!slots.length) return;
+
+  const freeCount = slots.filter(s => !s.occupied && !s.error).length;
+  const pct = Math.round((freeCount / 4) * 100);
+
+  const countEl = document.getElementById('freeCount');
+  const bar     = document.getElementById('barFill');
+  const pctEl   = document.getElementById('barPct');
+  const alert   = document.getElementById('alertBanner');
+
+  countEl.textContent = freeCount;
+  countEl.className   = 'hero-count' + (freeCount === 0 ? ' zero' : '');
+
+  bar.style.width = pct + '%';
+  bar.className   = 'bar-fill' + (pct === 0 ? ' danger' : pct < 50 ? ' warn' : '');
+  pctEl.textContent = pct + '% free';
+
+  // Full lot alert
+  alert.className = 'alert-banner' + (freeCount === 0 ? ' show' : '');
+
+  // Analytics
+  const occupiedCount = slots.filter(s => s.occupied).length;
+  pushHistory(occupiedCount);
+  updateAvgOccupancy();
+
+  // Last update time
+  document.getElementById('statTime').textContent =
+    new Date().toLocaleTimeString('en-IN', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+}
+
+// ═══════════════════════════════════════════
+//  HISTORY & CHART
+// ═══════════════════════════════════════════
+let chart;
+
+function initChart() {
+  const ctx = document.getElementById('occupancyChart').getContext('2d');
+  chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [{
+        label: 'Occupied slots',
+        data: [],
+        borderColor: '#00e5ff',
+        backgroundColor: 'rgba(0,229,255,.08)',
+        borderWidth: 2,
+        tension: .4,
+        fill: true,
+        pointRadius: 3,
+        pointBackgroundColor: '#00e5ff',
+        pointBorderColor: '#07090f',
+        pointBorderWidth: 2
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: {
+          ticks: { color: '#6272a4', font: { family: "'Share Tech Mono'", size: 10 } },
+          grid: { color: 'rgba(28,37,64,.8)' }
+        },
+        y: {
+          min: 0, max: 4,
+          ticks: {
+            stepSize: 1,
+            color: '#6272a4',
+            font: { family: "'Share Tech Mono'", size: 10 }
+          },
+          grid: { color: 'rgba(28,37,64,.8)' }
+        }
+      }
+    }
+  });
+}
+
+function pushHistory(count) {
+  const now = new Date().toLocaleTimeString('en-IN', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+  state.history.push({ time: now, count });
+  if (state.history.length > 20) state.history.shift();
+
+  chart.data.labels   = state.history.map(h => h.time);
+  chart.data.datasets[0].data = state.history.map(h => h.count);
+  chart.update('none');
+}
+
+function updateAvgOccupancy() {
+  if (!state.history.length) return;
+  const avg = state.history.reduce((a, h) => a + h.count, 0) / state.history.length;
+  const pct = Math.round((avg / 4) * 100);
+  document.getElementById('statAvg').innerHTML = pct + '<span class="stat-unit">%</span>';
+}
+
+// ═══════════════════════════════════════════
+//  HEARTBEAT WATCHDOG
+// ═══════════════════════════════════════════
+function startHeartbeatWatchdog() {
+  setInterval(() => {
+    const elapsed = Date.now() - state.lastHeartbeat;
+    const dot   = document.getElementById('hbDot');
+    const label = document.getElementById('hbLabel');
+    if (elapsed > 15000) {
+      dot.className   = 'hb-dot offline';
+      label.textContent = 'OFFLINE';
+      label.style.color = 'var(--occupied)';
+    } else {
+      dot.className   = 'hb-dot';
+      label.textContent = 'LIVE';
+      label.style.color = '';
+    }
+  }, 3000);
+}
+
+// ═══════════════════════════════════════════
+//  FIREBASE LISTENERS
+// ═══════════════════════════════════════════
+function attachListeners() {
+  // Listen to each slot individually for instant updates
+  for (let i = 1; i <= 4; i++) {
+    db.ref('slots/' + i).on('value', snap => {
+      const data = snap.val();
+      if (data !== null) {
+        updateSlot(i, data);
+        state.lastHeartbeat = Date.now();
+      }
+    });
+  }
+
+  // Also listen for heartbeat node (ESP32 sends this every 10s)
+  db.ref('heartbeat').on('value', snap => {
+    if (snap.val() !== null) {
+      state.lastHeartbeat = Date.now();
+    }
+  });
+}
+
+// ═══════════════════════════════════════════
+//  INIT
+// ═══════════════════════════════════════════
+buildSlotCards();
+initChart();
+startHeartbeatWatchdog();
+attachListeners();
+</script>
+</body>
+</html>
