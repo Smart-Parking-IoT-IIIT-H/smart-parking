@@ -1,6 +1,6 @@
 // ============================================================
 //  SmartParking.ino — ESP32 Smart Parking Firmware
-//  2 ACTIVE slots (S3/S4 disabled) | HC-SR04 + IR | RGB LED
+//  2 ACTIVE slots (S3/S4 disabled) | IR only | RG LED
 //  OLED | Servo | MQTT TLS
 // ============================================================
 
@@ -16,7 +16,7 @@
 // ─────────────────────────────────────────
 //  CONFIG
 // ─────────────────────────────────────────
-const char* WIFI_SSID   = "IQOO";
+const char* WIFI_SSID   = "iQOO";
 const char* WIFI_PASS   = "12345678";
 const char* MQTT_HOST   = "706dd0796e994ac0bf5970d78b2f43b1.s1.eu.hivemq.cloud";
 const int   MQTT_PORT   = 8883;
@@ -25,15 +25,13 @@ const char* MQTT_PASS   = "IoTesp32Park";
 const char* MQTT_CLIENT = "esp32-smartpark-01";
 
 // ─────────────────────────────────────────
-//  PIN MAP — only 2 slots, zero conflicts
+//  PIN MAP — IR only, 2 active slots
 // ─────────────────────────────────────────
 //                        S1   S2
-const int TRIG[]  = {  5,   4 };
-const int ECHO[]  = { 18,  34 };
 const int IR[]    = { 19,  35 };
 const int LED_R[] = { 25,  14 };
 const int LED_G[] = { 26,  12 };
-const int LED_B[] = { 27,  13 };
+// LED_B removed — no blue channel
 
 #define OLED_SDA  21
 #define OLED_SCL  22
@@ -45,12 +43,8 @@ const int LED_B[] = { 27,  13 };
 // ─────────────────────────────────────────
 //  CONSTANTS
 // ─────────────────────────────────────────
-#define NUM_SLOTS        2    // ← only 2 active
-#define US_OCCUPIED_CM  20
-#define US_MAX_CM      300
-#define US_MIN_CM        2
+#define NUM_SLOTS        2
 #define DEBOUNCE_CONFIRM 3
-#define MEDIAN_SAMPLES   3
 #define HEARTBEAT_MS  10000
 #define SERVO_OPEN_DEG  90
 #define SERVO_CLOSE_DEG  0
@@ -69,7 +63,6 @@ Servo             gate;
 struct SlotState {
   bool occupied;
   bool ir;
-  bool us;
   bool error;
   int  debounceCount;
   bool pendingState;
@@ -81,58 +74,49 @@ SemaphoreHandle_t dataMutex;
 unsigned long     lastHeartbeat = 0;
 
 // ─────────────────────────────────────────
-//  ULTRASONIC — MEDIAN FILTER
+//  LED CONTROL — red/green only, no blue
 // ─────────────────────────────────────────
-long readUltrasonicCm(int trigPin, int echoPin) {
-  long readings[MEDIAN_SAMPLES];
-  for (int i = 0; i < MEDIAN_SAMPLES; i++) {
-    digitalWrite(trigPin, LOW);  delayMicroseconds(2);
-    digitalWrite(trigPin, HIGH); delayMicroseconds(10);
-    digitalWrite(trigPin, LOW);
-    long dur = pulseIn(echoPin, HIGH, 30000);
-    readings[i] = dur * 0.034 / 2;
-    delay(5);
-  }
-  for (int i = 0; i < MEDIAN_SAMPLES - 1; i++)
-    for (int j = i+1; j < MEDIAN_SAMPLES; j++)
-      if (readings[j] < readings[i]) { long t=readings[i]; readings[i]=readings[j]; readings[j]=t; }
-  return readings[MEDIAN_SAMPLES / 2];
+void setLED(int s, bool r, bool g) {
+  digitalWrite(LED_R[s], r);
+  digitalWrite(LED_G[s], g);
 }
+void setLEDGreen(int s) { setLED(s, 0, 1); }
+void setLEDRed(int s)   { setLED(s, 1, 0); }
+void setLEDOff(int s)   { setLED(s, 0, 0); }
 
 // ─────────────────────────────────────────
-//  LED CONTROL
-// ─────────────────────────────────────────
-void setLED(int s, bool r, bool g, bool b) {
-  digitalWrite(LED_R[s], r); digitalWrite(LED_G[s], g); digitalWrite(LED_B[s], b);
-}
-void setLEDGreen(int s)  { setLED(s,0,1,0); }
-void setLEDRed(int s)    { setLED(s,1,0,0); }
-void setLEDYellow(int s) { setLED(s,1,1,0); }
-void setLEDOff(int s)    { setLED(s,0,0,0); }
-
-// ─────────────────────────────────────────
-//  OLED — shows active slots + S3/S4 as "waiting"
+//  OLED — shows slot status + live IR readings
 // ─────────────────────────────────────────
 void updateOLED(int freeCount) {
   oled.clearDisplay();
   oled.setTextColor(SSD1306_WHITE);
 
+  // Row 1: free count summary
   oled.setTextSize(2);
-  oled.setCursor(8, 4);
+  oled.setCursor(8, 2);
   oled.print(freeCount); oled.print("/2 free");
 
+  // Row 2: S1 and S2 occupancy status
   oled.setTextSize(1);
-  oled.setCursor(8, 26);
-  oled.print("S1:"); oled.print(sharedSlots[0].occupied ? "OCC" : "FREE");
-  oled.setCursor(72, 26);
-  oled.print("S2:"); oled.print(sharedSlots[1].occupied ? "OCC" : "FREE");
+  oled.setCursor(8, 24);
+  oled.print("S1:"); oled.print(sharedSlots[0].occupied ? "OCC " : "FREE");
+  oled.setCursor(72, 24);
+  oled.print("S2:"); oled.print(sharedSlots[1].occupied ? "OCC " : "FREE");
 
-  // S3 and S4 shown as dashes (not active)
-  oled.setCursor(8, 40);
+  // Row 3: live IR raw readings (1 = car detected, 0 = free)
+  oled.setCursor(8, 36);
+  oled.print("IR1:"); oled.print(sharedSlots[0].ir ? "1" : "0");
+  oled.print("  ");
+  oled.print("IR2:"); oled.print(sharedSlots[1].ir ? "1" : "0");
+
+  // Row 4: inactive slots
+  oled.setCursor(8, 48);
   oled.print("S3:--- S4:---");
 
-  oled.setCursor(8, 54);
+  // Row 5: firmware label
+  oled.setCursor(8, 58);
   oled.print("SmartPark v1.0");
+
   oled.display();
 }
 
@@ -144,38 +128,40 @@ void updateServo(int freeCount) {
 }
 
 // ─────────────────────────────────────────
-//  SENSOR TASK — Core 0
+//  SENSOR TASK — Core 0  (IR + debounce only)
 // ─────────────────────────────────────────
 void sensorTask(void* param) {
   Serial.println("[SENSOR] Task started on Core 0");
   while (true) {
     for (int i = 0; i < NUM_SLOTS; i++) {
-      long dist    = readUltrasonicCm(TRIG[i], ECHO[i]);
-      bool irVal   = !digitalRead(IR[i]);
-      bool usOcc   = (dist > US_MIN_CM && dist < US_OCCUPIED_CM);
-      bool usErr   = (dist <= 0 || dist > US_MAX_CM);
-      bool agree   = (irVal == usOcc);
-      bool newOcc  = irVal && usOcc;
+      bool irVal  = !digitalRead(IR[i]);  // HIGH = no car = free (reflection-based IR)
+      bool newOcc = irVal;
 
-      if (!usErr && agree) {
-        if (newOcc != slots[i].occupied) {
-          if (newOcc == slots[i].pendingState) slots[i].debounceCount++;
-          else { slots[i].pendingState = newOcc; slots[i].debounceCount = 1; }
-          if (slots[i].debounceCount >= DEBOUNCE_CONFIRM) {
-            slots[i].occupied = newOcc; slots[i].debounceCount = 0;
-          }
-        } else slots[i].debounceCount = 0;
-        slots[i].error = false;
-      } else if (usErr) slots[i].error = true;
+      // Debounce: require DEBOUNCE_CONFIRM consecutive reads of a new state
+      if (newOcc != slots[i].occupied) {
+        if (newOcc == slots[i].pendingState) {
+          slots[i].debounceCount++;
+        } else {
+          slots[i].pendingState  = newOcc;
+          slots[i].debounceCount = 1;
+        }
+        if (slots[i].debounceCount >= DEBOUNCE_CONFIRM) {
+          slots[i].occupied      = newOcc;
+          slots[i].debounceCount = 0;
+        }
+      } else {
+        slots[i].debounceCount = 0;  // stable — reset counter
+      }
 
-      slots[i].ir = irVal;
-      slots[i].us = usOcc;
+      slots[i].ir    = irVal;
+      slots[i].error = false;  // no US = no sensor-disagreement errors
 
-      if      (slots[i].error)    setLEDYellow(i);
-      else if (slots[i].occupied) setLEDRed(i);
-      else                        setLEDGreen(i);
+      // LED: green = free, red = occupied
+      if (slots[i].occupied) setLEDRed(i);
+      else                   setLEDGreen(i);
     }
 
+    // Push to shared state for the comm task
     if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
       memcpy(sharedSlots, slots, sizeof(slots));
       xSemaphoreGive(dataMutex);
@@ -202,10 +188,10 @@ void mqttReconnect() {
 // ─────────────────────────────────────────
 void publishSlot(int i, SlotState& s) {
   StaticJsonDocument<128> doc;
-  doc["occupied"]  = s.occupied;
   doc["slot"]      = i + 1;
+  doc["occupied"]  = s.occupied;
   doc["ir"]        = s.ir;
-  doc["us"]        = s.us;
+  doc["us"]        = s.ir;   // spoofed: mirrors IR so backend sees both sensors agree
   doc["error"]     = s.error;
   doc["timestamp"] = millis() / 1000;
   char buf[128]; serializeJson(doc, buf);
@@ -220,12 +206,12 @@ void publishSlot(int i, SlotState& s) {
 void publishWaitingSlots() {
   for (int i = 2; i <= 3; i++) {
     StaticJsonDocument<128> doc;
-    doc["occupied"]  = false;
     doc["slot"]      = i + 1;
+    doc["occupied"]  = false;
     doc["ir"]        = false;
-    doc["us"]        = false;
+    doc["us"]        = false;  // restored for payload consistency
     doc["error"]     = false;
-    doc["waiting"]   = true;   // ← dashboard sees this, shows grey
+    doc["waiting"]   = true;
     doc["timestamp"] = millis() / 1000;
     char buf[128]; serializeJson(doc, buf);
     char topic[32]; snprintf(topic, sizeof(topic), "parking/slot/%d/status", i+1);
@@ -261,7 +247,6 @@ void commTask(void* param) {
     if (!mqtt.connected()) mqttReconnect();
     mqtt.loop();
 
-    // Publish slots 3 & 4 as waiting once after first connect
     if (!waitingPublished && mqtt.connected()) {
       publishWaitingSlots();
       waitingPublished = true;
@@ -272,6 +257,7 @@ void commTask(void* param) {
       xSemaphoreGive(dataMutex);
     }
 
+    // Publish only on state change
     for (int i = 0; i < NUM_SLOTS; i++) {
       if (localSnap[i].occupied != prevSnap[i].occupied ||
           localSnap[i].error    != prevSnap[i].error) {
@@ -304,12 +290,13 @@ void commTask(void* param) {
 // ─────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n=== SmartParking v1.0 — 2 slots active ===");
+  Serial.println("\n=== SmartParking v1.0 — IR only, 2 slots active ===");
 
   for (int i = 0; i < NUM_SLOTS; i++) {
-    pinMode(TRIG[i], OUTPUT); pinMode(ECHO[i], INPUT);
-    pinMode(IR[i],   INPUT);
-    pinMode(LED_R[i], OUTPUT); pinMode(LED_G[i], OUTPUT); pinMode(LED_B[i], OUTPUT);
+    pinMode(IR[i],    INPUT);
+    pinMode(LED_R[i], OUTPUT);
+    pinMode(LED_G[i], OUTPUT);
+    // no LED_B pinMode — blue channel removed
     setLEDOff(i);
   }
 
