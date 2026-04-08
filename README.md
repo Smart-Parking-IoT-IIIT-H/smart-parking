@@ -14,7 +14,9 @@ SmartPark is an end-to-end IoT-based smart parking system that monitors parking 
 ## 📁 Repository Structure
 
 - `esp32/SmartParking.ino` — C++ Firmware for the ESP32 microcontroller.
-- `public/index.html` — The main frontend application file (HTML/CSS/JS).
+- `public/index.html` — The main frontend dashboard application.
+- `public/style/style.css` — Modern UI styling for the dashboard.
+- `public/script/script.js` — Client-side logic for real-time Firebase syncing and UI updates.
 - `requirements.txt` — Lists the Arduino library dependencies for the firmware.
 - `firebase.json` — Configuration for deploying the frontend application to Firebase Hosting.
 
