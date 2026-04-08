@@ -1,6 +1,6 @@
 // ============================================================
 //  SmartParking.ino — ESP32 Smart Parking Firmware
-//  2 ACTIVE slots (S3/S4 disabled) | IR only | RG LED
+//  2 ACTIVE slots (S3/S4 disabled) | IR + US | RG LED
 //  OLED | Servo | MQTT TLS
 // ============================================================
 
@@ -25,13 +25,17 @@ const char* MQTT_PASS   = "IoTesp32Park";
 const char* MQTT_CLIENT = "esp32-smartpark-01";
 
 // ─────────────────────────────────────────
-//  PIN MAP — IR only, 2 active slots
+//  PIN MAP — IR + US, 2 active slots
 // ─────────────────────────────────────────
 //                        S1   S2
 const int IR[]    = { 19,  35 };
 const int LED_R[] = { 25,  14 };
 const int LED_G[] = { 26,  12 };
 // LED_B removed — no blue channel
+
+//  US sensor pins — change here if your wiring differs
+const int US_TRIG[] = {  4,  15 };
+const int US_ECHO[] = {  5,  13 };
 
 #define OLED_SDA  21
 #define OLED_SCL  22
@@ -43,11 +47,18 @@ const int LED_G[] = { 26,  12 };
 // ─────────────────────────────────────────
 //  CONSTANTS
 // ─────────────────────────────────────────
-#define NUM_SLOTS        2
-#define DEBOUNCE_CONFIRM 3
-#define HEARTBEAT_MS  10000
-#define SERVO_OPEN_DEG  90
-#define SERVO_CLOSE_DEG  0
+#define NUM_SLOTS           2
+#define DEBOUNCE_CONFIRM    3
+#define HEARTBEAT_MS     10000
+#define SERVO_OPEN_DEG      90
+#define SERVO_CLOSE_DEG      0
+
+#define US_CALIB_PINGS      10     // pings per slot during boot calibration
+#define US_CALIB_NOISE_CM   50.0f  // readings above this are treated as noise/timeout
+#define US_CALIB_MIN_VALID   3     // need at least this many good pings to trust average
+#define US_CALIB_MARGIN_CM   3.0f  // threshold = average − margin
+#define US_CALIB_FALLBACK_CM 11.0f // used when calibration cannot get enough valid pings
+#define US_TIMEOUT_US       30000  // pulseIn timeout (≈ 5 m round-trip)
 
 // ─────────────────────────────────────────
 //  OBJECTS
@@ -61,17 +72,20 @@ Servo             gate;
 //  STATE
 // ─────────────────────────────────────────
 struct SlotState {
-  bool occupied;
-  bool ir;
-  bool error;
-  int  debounceCount;
-  bool pendingState;
+  bool  occupied;
+  bool  ir;
+  float us;          // last measured distance in cm (0.0 if skipped)
+  bool  error;
+  int   debounceCount;
+  bool  pendingState;
 };
 
 SlotState         slots[NUM_SLOTS];
 SlotState         sharedSlots[NUM_SLOTS];
 SemaphoreHandle_t dataMutex;
 unsigned long     lastHeartbeat = 0;
+
+float             usThreshold[NUM_SLOTS];  // set by calibrateUS() at boot
 
 // ─────────────────────────────────────────
 //  LED CONTROL — red/green only, no blue
@@ -85,7 +99,55 @@ void setLEDRed(int s)   { setLED(s, 1, 0); }
 void setLEDOff(int s)   { setLED(s, 0, 0); }
 
 // ─────────────────────────────────────────
-//  OLED — shows slot status + live IR readings
+//  US — single ping, returns distance in cm
+//  Returns -1.0 on timeout
+// ─────────────────────────────────────────
+float pingUS(int slot) {
+  digitalWrite(US_TRIG[slot], LOW);
+  delayMicroseconds(2);
+  digitalWrite(US_TRIG[slot], HIGH);
+  delayMicroseconds(10);
+  digitalWrite(US_TRIG[slot], LOW);
+  long duration = pulseIn(US_ECHO[slot], HIGH, US_TIMEOUT_US);
+  if (duration == 0) return -1.0f;           // timeout
+  return duration * 0.0343f / 2.0f;          // cm
+}
+
+// ─────────────────────────────────────────
+//  BOOT CALIBRATION — runs synchronously in setup()
+//  Slots MUST be empty when powering on.
+// ─────────────────────────────────────────
+void calibrateUS() {
+  Serial.println("[CALIB] Starting US calibration — ensure slots are EMPTY");
+  for (int i = 0; i < NUM_SLOTS; i++) {
+    float sum   = 0.0f;
+    int   valid = 0;
+    for (int p = 0; p < US_CALIB_PINGS; p++) {
+      float d = pingUS(i);
+      if (d > 0.0f && d <= US_CALIB_NOISE_CM) {
+        sum += d;
+        valid++;
+      }
+      Serial.printf("[CALIB] S%d ping %d: %.1f cm\n", i + 1, p + 1, d);
+      delay(60);   // allow echo to settle between pings
+    }
+
+    if (valid >= US_CALIB_MIN_VALID) {
+      float avg = sum / valid;
+      usThreshold[i] = avg - US_CALIB_MARGIN_CM;
+      Serial.printf("[CALIB] S%d avg=%.1f cm  threshold=%.1f cm (%d/%d valid)\n",
+                    i + 1, avg, usThreshold[i], valid, US_CALIB_PINGS);
+    } else {
+      usThreshold[i] = US_CALIB_FALLBACK_CM;
+      Serial.printf("[CALIB] S%d FALLBACK threshold=%.1f cm (only %d/%d valid — check wiring)\n",
+                    i + 1, usThreshold[i], valid, US_CALIB_PINGS);
+    }
+  }
+  Serial.println("[CALIB] Done.");
+}
+
+// ─────────────────────────────────────────
+//  OLED — shows slot status + live IR/US
 // ─────────────────────────────────────────
 void updateOLED(int freeCount) {
   oled.clearDisplay();
@@ -103,7 +165,7 @@ void updateOLED(int freeCount) {
   oled.setCursor(72, 24);
   oled.print("S2:"); oled.print(sharedSlots[1].occupied ? "OCC " : "FREE");
 
-  // Row 3: live IR raw readings (1 = car detected, 0 = free)
+  // Row 3: live IR raw readings
   oled.setCursor(8, 36);
   oled.print("IR1:"); oled.print(sharedSlots[0].ir ? "1" : "0");
   oled.print("  ");
@@ -115,7 +177,7 @@ void updateOLED(int freeCount) {
 
   // Row 5: firmware label
   oled.setCursor(8, 58);
-  oled.print("SmartPark v1.0");
+  oled.print("SmartPark v1.1");
 
   oled.display();
 }
@@ -128,14 +190,27 @@ void updateServo(int freeCount) {
 }
 
 // ─────────────────────────────────────────
-//  SENSOR TASK — Core 0  (IR + debounce only)
+//  SENSOR TASK — Core 0
+//  IR gates the US read; debounce is unchanged.
 // ─────────────────────────────────────────
 void sensorTask(void* param) {
   Serial.println("[SENSOR] Task started on Core 0");
   while (true) {
     for (int i = 0; i < NUM_SLOTS; i++) {
-      bool irVal  = !digitalRead(IR[i]);  // HIGH = no car = free (reflection-based IR)
-      bool newOcc = irVal;
+      bool irVal = !digitalRead(IR[i]);   // true = car detected (reflection-based IR)
+
+      bool newOcc;
+      float dist = 0.0f;
+
+      if (irVal) {
+        // IR triggered — confirm with US
+        dist   = pingUS(i);
+        newOcc = (dist > 0.0f && dist <= usThreshold[i]);
+        // dist <= 0 means US timed out — treat as free (false positive from IR)
+      } else {
+        // IR clear — no need to ping US
+        newOcc = false;
+      }
 
       // Debounce: require DEBOUNCE_CONFIRM consecutive reads of a new state
       if (newOcc != slots[i].occupied) {
@@ -150,11 +225,12 @@ void sensorTask(void* param) {
           slots[i].debounceCount = 0;
         }
       } else {
-        slots[i].debounceCount = 0;  // stable — reset counter
+        slots[i].debounceCount = 0;   // stable — reset counter
       }
 
       slots[i].ir    = irVal;
-      slots[i].error = false;  // no US = no sensor-disagreement errors
+      slots[i].us    = dist;
+      slots[i].error = false;
 
       // LED: green = free, red = occupied
       if (slots[i].occupied) setLEDRed(i);
@@ -184,17 +260,17 @@ void mqttReconnect() {
 }
 
 // ─────────────────────────────────────────
-//  PUBLISH SLOT
+//  PUBLISH SLOT — us field is now real data
 // ─────────────────────────────────────────
 void publishSlot(int i, SlotState& s) {
-  StaticJsonDocument<128> doc;
+  StaticJsonDocument<160> doc;
   doc["slot"]      = i + 1;
   doc["occupied"]  = s.occupied;
   doc["ir"]        = s.ir;
-  doc["us"]        = s.ir;   // spoofed: mirrors IR so backend sees both sensors agree
+  doc["us"]        = s.us;       // real measured distance in cm (0.0 if IR was clear)
   doc["error"]     = s.error;
   doc["timestamp"] = millis() / 1000;
-  char buf[128]; serializeJson(doc, buf);
+  char buf[160]; serializeJson(doc, buf);
   char topic[32]; snprintf(topic, sizeof(topic), "parking/slot/%d/status", i+1);
   mqtt.publish(topic, buf, true);
   Serial.printf("[MQTT] Slot %d: %s\n", i+1, buf);
@@ -209,7 +285,7 @@ void publishWaitingSlots() {
     doc["slot"]      = i + 1;
     doc["occupied"]  = false;
     doc["ir"]        = false;
-    doc["us"]        = false;  // restored for payload consistency
+    doc["us"]        = 0.0f;
     doc["error"]     = false;
     doc["waiting"]   = true;
     doc["timestamp"] = millis() / 1000;
@@ -290,13 +366,15 @@ void commTask(void* param) {
 // ─────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n=== SmartParking v1.0 — IR only, 2 slots active ===");
+  Serial.println("\n=== SmartParking v1.1 — IR + US, 2 slots active ===");
 
   for (int i = 0; i < NUM_SLOTS; i++) {
-    pinMode(IR[i],    INPUT);
-    pinMode(LED_R[i], OUTPUT);
-    pinMode(LED_G[i], OUTPUT);
-    // no LED_B pinMode — blue channel removed
+    pinMode(IR[i],          INPUT);
+    pinMode(LED_R[i],       OUTPUT);
+    pinMode(LED_G[i],       OUTPUT);
+    pinMode(US_TRIG[i],     OUTPUT);
+    pinMode(US_ECHO[i],     INPUT);
+    digitalWrite(US_TRIG[i], LOW);
     setLEDOff(i);
   }
 
@@ -306,7 +384,7 @@ void setup() {
   } else {
     oled.clearDisplay();
     oled.setTextSize(1); oled.setTextColor(SSD1306_WHITE);
-    oled.setCursor(0, 28); oled.print("  SmartPark booting...");
+    oled.setCursor(0, 24); oled.print("  Calibrating US...");
     oled.display();
   }
 
@@ -316,6 +394,15 @@ void setup() {
   memset(slots,       0, sizeof(slots));
   memset(sharedSlots, 0, sizeof(sharedSlots));
   dataMutex = xSemaphoreCreateMutex();
+
+  // Boot calibration — must run before tasks start; slots must be empty
+  calibrateUS();
+
+  // Update OLED to show boot complete
+  oled.clearDisplay();
+  oled.setTextSize(1); oled.setTextColor(SSD1306_WHITE);
+  oled.setCursor(0, 28); oled.print("  SmartPark booting...");
+  oled.display();
 
   xTaskCreatePinnedToCore(sensorTask, "SensorTask", 4096, NULL, 2, NULL, 0);
   xTaskCreatePinnedToCore(commTask,   "CommTask",   8192, NULL, 1, NULL, 1);
