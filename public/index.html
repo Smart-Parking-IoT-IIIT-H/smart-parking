@@ -1,206 +1,260 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>SmartPark — Live Monitoring</title>
-  <meta name="theme-color" content="#06060e"/>
-  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="theme-color" content="#06060e" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
 
-  <link rel="preconnect" href="https://fonts.googleapis.com"/>
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700;9..40,800&display=swap" rel="stylesheet"/>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700;9..40,800&display=swap"
+    rel="stylesheet" />
 
   <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+  <script src="https://unpkg.com/mqtt@5.5.0/dist/mqtt.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 
-  <link rel="stylesheet" href="style/style.css"/>
+  <link rel="stylesheet" href="style/style.css" />
 </head>
+
 <body>
 
-<div class="scanline"></div>
+  <div class="scanline"></div>
 
-<!-- ══════════════════════
+  <!-- ══════════════════════
      BANNER (> 650px)
 ══════════════════════ -->
-<div class="banner">
+  <div class="banner">
 
-  <!-- HEADER -->
-  <div class="b-header">
-    <div style="display:flex;align-items:center">
-      <div class="b-brand"><span class="g">SMART</span>PARK</div>
-      <div class="b-tagline">LIVE MONITORING SYSTEM</div>
+    <!-- HEADER -->
+    <div class="b-header">
+      <div style="display:flex;align-items:center">
+        <div class="b-brand"><span class="g">SMART</span>PARK</div>
+        <div class="b-tagline">LIVE MONITORING SYSTEM</div>
+      </div>
+      <div class="b-pill">
+        <div class="dot" id="b-dot"></div>
+        <span id="b-status">connecting</span>
+        <span class="b-pill-sep">·</span>
+        <span style="font-size:10px" id="b-time">—</span>
+        <span class="b-pill-sep">·</span>
+        <span style="color:var(--muted2);font-size:10px">SMART-PARKING-1DF76</span>
+      </div>
     </div>
-    <div class="b-pill">
-      <div class="dot" id="b-dot"></div>
-      <span id="b-status">connecting</span>
-      <span class="b-pill-sep">·</span>
-      <span style="font-size:10px" id="b-time">—</span>
-      <span class="b-pill-sep">·</span>
-      <span style="color:var(--muted2);font-size:10px">SMART-PARKING-1DF76</span>
+
+    <!-- BENTO GRID — slots-dominant billboard layout -->
+    <div class="b-bento">
+
+      <!-- LEFT: 2×2 large slot cards -->
+      <div class="b-slots-grid" id="b-slots-grid"></div>
+
+      <!-- RIGHT: compact sidebar -->
+      <div class="b-sidebar">
+
+        <!-- HERO FREE COUNT (compact) -->
+        <div class="b-card b-card-hero" id="b-hero-card">
+          <div>
+            <div class="b-hero-label">Available</div>
+          </div>
+          <div class="b-free-num" id="b-free">—</div>
+          <div>
+            <div class="b-free-sub">of <span id="b-total-txt" style="color:var(--text)">4</span> &nbsp;·&nbsp; <span
+                class="accent" id="b-occ-txt">—</span></div>
+            <div style="font-family:var(--mono);font-size:8px;color:var(--muted2);margin-top:3px;letter-spacing:.08em"
+              id="b-last-update">—</div>
+          </div>
+        </div>
+
+        <!-- UTILIZATION -->
+        <div class="b-card b-card-util">
+          <div class="b-util-top">
+            <div>
+              <div class="b-util-title">Utilization</div>
+              <div class="b-util-pct" id="b-pct">—%</div>
+            </div>
+            <div style="font-family:var(--mono);font-size:9px;color:var(--muted);text-align:right">
+              <div style="color:var(--green);font-size:1rem;font-family:var(--display);font-weight:700"
+                id="b-free-small">—</div>
+              <div style="letter-spacing:.08em;font-size:8px">FREE</div>
+            </div>
+          </div>
+          <div class="b-seg-bar" id="b-segs"></div>
+        </div>
+
+        <!-- STATS -->
+        <div class="b-card b-card-stats" id="b-stats-card">
+          <div class="b-stat">
+            <div class="b-stat-label">Avg Occ.</div>
+            <div class="b-stat-val" id="b-avg">—<span class="b-stat-unit">%</span></div>
+          </div>
+          <div class="b-stat">
+            <div class="b-stat-label">Served</div>
+            <div class="b-stat-val" id="b-served">0</div>
+          </div>
+          <div class="b-stat">
+            <div class="b-stat-label">Uptime</div>
+            <div class="b-stat-val" style="font-size:1rem;color:var(--muted)" id="b-uptime">0m</div>
+          </div>
+          <div class="b-stat">
+            <div class="b-stat-label">Capacity</div>
+            <div class="b-stat-val" style="color:var(--muted)">4</div>
+          </div>
+        </div>
+
+        <!-- CHART -->
+        <div class="b-card b-card-chart">
+          <div class="b-chart-title">Occupancy · last 20</div>
+          <div class="b-chart-inner">
+            <canvas id="b-chart"></canvas>
+          </div>
+        </div>
+
+        <!-- EXIT PAYMENT -->
+        <div class="b-card b-card-exit" id="b-exit-card">
+          <div class="exit-idle" id="b-exit-idle">
+            <div class="exit-icon">🚧</div>
+            <div class="exit-idle-text">EXIT GATE</div>
+            <div class="exit-idle-sub">No active exit</div>
+          </div>
+          <div class="exit-active" id="b-exit-active" style="display:none">
+            <div class="exit-header">
+              <span class="exit-badge">PAYMENT DUE</span>
+              <span class="exit-slot" id="b-exit-slot">SLOT 01</span>
+            </div>
+            <div class="exit-qr-wrap">
+              <div id="b-exit-qr"></div>
+            </div>
+            <div class="exit-cost" id="b-exit-cost">₹0</div>
+            <div class="exit-duration" id="b-exit-dur">0 min</div>
+            <div class="exit-countdown" id="b-exit-countdown">Gate opens in 30s</div>
+          </div>
+        </div>
+
+      </div>
+
     </div>
+
+    <!-- ALERT OVERLAY (absolute, appears over slots grid) -->
+    <div id="b-alert-overlay" style="display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:5;
+    background:rgba(255,68,102,.1);border:2px solid rgba(255,68,102,.45);border-radius:16px;
+    padding:18px 32px;align-items:center;gap:14px;backdrop-filter:blur(8px)">
+      <div class="dot off" style="flex-shrink:0"></div>
+      <span
+        style="font-family:var(--display);font-size:16px;font-weight:700;letter-spacing:.14em;color:var(--red);text-transform:uppercase">
+        PARKING LOT FULL
+      </span>
+    </div>
+
+    <!-- FOOTER -->
+    <div class="b-footer">
+      <div class="b-footer-txt">ESP32 + FIREBASE RTDB + HIVEMQ &nbsp;·&nbsp; ASIA-SOUTHEAST1</div>
+      <div class="b-footer-txt"><span class="b-shimmer">SMARTPARK v2.0</span></div>
+      <div class="b-footer-txt" id="b-footer-time">—</div>
+    </div>
+
   </div>
 
-  <!-- BENTO GRID — slots-dominant billboard layout -->
-  <div class="b-bento">
+  <!-- ══════════════════════
+     PHONE (≤ 650px)
+══════════════════════ -->
+  <div class="phone">
 
-    <!-- LEFT: 2×2 large slot cards -->
-    <div class="b-slots-grid" id="b-slots-grid"></div>
+    <div class="p-header">
+      <div class="p-brand"><span class="g">smart</span>park</div>
+      <div class="p-live">
+        <div class="dot" id="p-dot"></div>
+        <span id="p-status">connecting</span>
+        <span style="margin-left:8px;color:var(--muted2)" id="p-time">—</span>
+      </div>
+    </div>
 
-    <!-- RIGHT: compact sidebar -->
-    <div class="b-sidebar">
+    <div class="p-body">
 
-      <!-- HERO FREE COUNT (compact) -->
-      <div class="b-card b-card-hero" id="b-hero-card">
-        <div>
-          <div class="b-hero-label">Available</div>
+      <!-- HERO -->
+      <div class="p-hero" id="p-hero-card">
+        <div class="p-left">
+          <div class="p-free-big" id="p-free">—</div>
+          <div class="p-free-label">SLOTS FREE</div>
         </div>
-        <div class="b-free-num" id="b-free">—</div>
-        <div>
-          <div class="b-free-sub">of <span id="b-total-txt" style="color:var(--text)">4</span> &nbsp;·&nbsp; <span class="accent" id="b-occ-txt">—</span></div>
-          <div style="font-family:var(--mono);font-size:8px;color:var(--muted2);margin-top:3px;letter-spacing:.08em" id="b-last-update">—</div>
+        <div class="p-right">
+          <div class="p-pct-row"><span>IN USE</span><span class="p-pct-num" id="p-pct">—%</span></div>
+          <div class="p-seg-bar" id="p-segs"></div>
+          <div style="font-family:var(--mono);font-size:.5rem;color:var(--muted);margin-top:8px;letter-spacing:.06em"
+            id="p-update">waiting…</div>
         </div>
       </div>
 
-      <!-- UTILIZATION -->
-      <div class="b-card b-card-util">
-        <div class="b-util-top">
-          <div>
-            <div class="b-util-title">Utilization</div>
-            <div class="b-util-pct" id="b-pct">—%</div>
-          </div>
-          <div style="font-family:var(--mono);font-size:9px;color:var(--muted);text-align:right">
-            <div style="color:var(--green);font-size:1rem;font-family:var(--display);font-weight:700" id="b-free-small">—</div>
-            <div style="letter-spacing:.08em;font-size:8px">FREE</div>
-          </div>
-        </div>
-        <div class="b-seg-bar" id="b-segs"></div>
+      <!-- ALERT -->
+      <div class="p-alert" id="p-alert">
+        <div class="dot off"></div>
+        Lot full — all slots occupied
+      </div>
+
+      <!-- SLOTS -->
+      <div>
+        <div class="p-section-label">slot status</div>
+        <div class="p-slots" id="p-slots"></div>
       </div>
 
       <!-- STATS -->
-      <div class="b-card b-card-stats" id="b-stats-card">
-        <div class="b-stat">
-          <div class="b-stat-label">Avg Occ.</div>
-          <div class="b-stat-val" id="b-avg">—<span class="b-stat-unit">%</span></div>
+      <div class="p-stats">
+        <div class="p-stat">
+          <div class="p-stat-label">Avg occupancy</div>
+          <div class="p-stat-val" id="p-avg">—<span class="p-stat-unit"> %</span></div>
         </div>
-        <div class="b-stat">
-          <div class="b-stat-label">Served</div>
-          <div class="b-stat-val" id="b-served">0</div>
+        <div class="p-stat">
+          <div class="p-stat-label">Vehicles served</div>
+          <div class="p-stat-val" id="p-served">0</div>
         </div>
-        <div class="b-stat">
-          <div class="b-stat-label">Uptime</div>
-          <div class="b-stat-val" style="font-size:1rem;color:var(--muted)" id="b-uptime">0m</div>
+        <div class="p-stat">
+          <div class="p-stat-label">Last update</div>
+          <div class="p-stat-val" style="font-size:1rem;color:var(--blue)" id="p-update2">—</div>
         </div>
-        <div class="b-stat">
-          <div class="b-stat-label">Capacity</div>
-          <div class="b-stat-val" style="color:var(--muted)">4</div>
+        <div class="p-stat">
+          <div class="p-stat-label">Total slots</div>
+          <div class="p-stat-val" style="color:var(--muted)">4</div>
         </div>
       </div>
 
       <!-- CHART -->
-      <div class="b-card b-card-chart">
-        <div class="b-chart-title">Occupancy · last 20</div>
-        <div class="b-chart-inner">
-          <canvas id="b-chart"></canvas>
+      <div class="p-chart-card">
+        <div class="p-chart-label">Occupancy History · last 20</div>
+        <div class="p-chart-wrap"><canvas id="p-chart"></canvas></div>
+      </div>
+
+      <!-- EXIT PAYMENT (phone) -->
+      <div class="p-exit-card" id="p-exit-card">
+        <div class="exit-idle" id="p-exit-idle">
+          <div class="exit-icon">🚧</div>
+          <div class="exit-idle-text">EXIT GATE</div>
+          <div class="exit-idle-sub">No active exit</div>
+        </div>
+        <div class="exit-active" id="p-exit-active" style="display:none">
+          <div class="exit-header">
+            <span class="exit-badge">PAYMENT DUE</span>
+            <span class="exit-slot" id="p-exit-slot">SLOT 01</span>
+          </div>
+          <div class="exit-qr-wrap">
+            <div id="p-exit-qr"></div>
+          </div>
+          <div class="exit-cost" id="p-exit-cost">₹0</div>
+          <div class="exit-duration" id="p-exit-dur">0 min</div>
+          <div class="exit-countdown" id="p-exit-countdown">Gate opens in 30s</div>
         </div>
       </div>
 
     </div>
 
+    <div class="p-footer">SMARTPARK · ESP32 + FIREBASE + HIVEMQ · SMART-PARKING-1DF76</div>
   </div>
 
-  <!-- ALERT OVERLAY (absolute, appears over slots grid) -->
-  <div id="b-alert-overlay" style="display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:5;
-    background:rgba(255,68,102,.1);border:2px solid rgba(255,68,102,.45);border-radius:16px;
-    padding:18px 32px;align-items:center;gap:14px;backdrop-filter:blur(8px)">
-    <div class="dot off" style="flex-shrink:0"></div>
-    <span style="font-family:var(--display);font-size:16px;font-weight:700;letter-spacing:.14em;color:var(--red);text-transform:uppercase">
-      PARKING LOT FULL
-    </span>
-  </div>
-
-  <!-- FOOTER -->
-  <div class="b-footer">
-    <div class="b-footer-txt">ESP32 + FIREBASE RTDB + HIVEMQ &nbsp;·&nbsp; ASIA-SOUTHEAST1</div>
-    <div class="b-footer-txt"><span class="b-shimmer">SMARTPARK v2.0</span></div>
-    <div class="b-footer-txt" id="b-footer-time">—</div>
-  </div>
-
-</div>
-
-<!-- ══════════════════════
-     PHONE (≤ 650px)
-══════════════════════ -->
-<div class="phone">
-
-  <div class="p-header">
-    <div class="p-brand"><span class="g">smart</span>park</div>
-    <div class="p-live">
-      <div class="dot" id="p-dot"></div>
-      <span id="p-status">connecting</span>
-      <span style="margin-left:8px;color:var(--muted2)" id="p-time">—</span>
-    </div>
-  </div>
-
-  <div class="p-body">
-
-    <!-- HERO -->
-    <div class="p-hero" id="p-hero-card">
-      <div class="p-left">
-        <div class="p-free-big" id="p-free">—</div>
-        <div class="p-free-label">SLOTS FREE</div>
-      </div>
-      <div class="p-right">
-        <div class="p-pct-row"><span>IN USE</span><span class="p-pct-num" id="p-pct">—%</span></div>
-        <div class="p-seg-bar" id="p-segs"></div>
-        <div style="font-family:var(--mono);font-size:.5rem;color:var(--muted);margin-top:8px;letter-spacing:.06em" id="p-update">waiting…</div>
-      </div>
-    </div>
-
-    <!-- ALERT -->
-    <div class="p-alert" id="p-alert">
-      <div class="dot off"></div>
-      Lot full — all slots occupied
-    </div>
-
-    <!-- SLOTS -->
-    <div>
-      <div class="p-section-label">slot status</div>
-      <div class="p-slots" id="p-slots"></div>
-    </div>
-
-    <!-- STATS -->
-    <div class="p-stats">
-      <div class="p-stat">
-        <div class="p-stat-label">Avg occupancy</div>
-        <div class="p-stat-val" id="p-avg">—<span class="p-stat-unit"> %</span></div>
-      </div>
-      <div class="p-stat">
-        <div class="p-stat-label">Vehicles served</div>
-        <div class="p-stat-val" id="p-served">0</div>
-      </div>
-      <div class="p-stat">
-        <div class="p-stat-label">Last update</div>
-        <div class="p-stat-val" style="font-size:1rem;color:var(--blue)" id="p-update2">—</div>
-      </div>
-      <div class="p-stat">
-        <div class="p-stat-label">Total slots</div>
-        <div class="p-stat-val" style="color:var(--muted)">4</div>
-      </div>
-    </div>
-
-    <!-- CHART -->
-    <div class="p-chart-card">
-      <div class="p-chart-label">Occupancy History · last 20</div>
-      <div class="p-chart-wrap"><canvas id="p-chart"></canvas></div>
-    </div>
-
-  </div>
-
-  <div class="p-footer">SMARTPARK · ESP32 + FIREBASE + HIVEMQ · SMART-PARKING-1DF76</div>
-</div>
-
-<script src="script/script.js"></script>
+  <script src="script/script.js"></script>
 </body>
+
 </html>

@@ -1,0 +1,50 @@
+[
+    {
+        "id": "mqtt-in-1",
+        "type": "mqtt in",
+        "z": "766e2989eabb3c74",
+        "name": "HiveMQ Slots",
+        "topic": "parking/slot/+/status",
+        "qos": "1",
+        "datatype": "auto-detect",
+        "broker": "hivemq-broker",
+        "nl": false,
+        "rap": false,
+        "inputs": 0,
+        "x": 1740,
+        "y": 320,
+        "wires": [
+            [
+                "json-1"
+            ]
+        ]
+    },
+    {
+        "id": "hivemq-broker",
+        "type": "mqtt-broker",
+        "name": "HiveMQ",
+        "broker": "706dd0796e994ac0bf5970d78b2f43b1.s1.eu.hivemq.cloud",
+        "port": "8883",
+        "tls": true,
+        "clientid": "nodered-client",
+        "autoConnect": true,
+        "usetls": true,
+        "protocolVersion": 4,
+        "keepalive": 15,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    }
+]

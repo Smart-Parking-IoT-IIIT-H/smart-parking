@@ -1,19 +1,19 @@
 /* ── Firebase ── */
 const firebaseConfig = {
-  apiKey:            "AIzaSyA73-b9qGJdzO34u7gjFIkOSqqTKn8a76A",
-  authDomain:        "smart-parking-1df76.firebaseapp.com",
-  databaseURL:       "https://smart-parking-1df76-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId:         "smart-parking-1df76",
-  storageBucket:     "smart-parking-1df76.firebasestorage.app",
+  apiKey: "AIzaSyA73-b9qGJdzO34u7gjFIkOSqqTKn8a76A",
+  authDomain: "smart-parking-1df76.firebaseapp.com",
+  databaseURL: "https://smart-parking-1df76-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "smart-parking-1df76",
+  storageBucket: "smart-parking-1df76.firebasestorage.app",
   messagingSenderId: "448571319292",
-  appId:             "1:448571319292:web:627000f798c7c42d658879"
+  appId: "1:448571319292:web:627000f798c7c42d658879"
 };
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 
 /* ── State ── */
 const state = {
-  slots: {1:null, 2:null, 3:null, 4:null},
+  slots: { 1: null, 2: null, 3: null, 4: null },
   vehiclesServed: 0,
   lastHb: Date.now(),
   history: [],
@@ -44,7 +44,7 @@ function buildPhoneSlots() {
   g.innerHTML = '';
   for (let i = 1; i <= 4; i++) {
     g.innerHTML += `
-      <div class="p-slot" id="ps${i}" style="animation-delay:${(i-1)*.07}s">
+      <div class="p-slot" id="ps${i}" style="animation-delay:${(i - 1) * .07}s">
         <div class="p-slot-icon" id="psi${i}">🅿</div>
         <div class="p-slot-info">
           <div class="p-slot-id">SLOT_0${i}</div>
@@ -81,11 +81,11 @@ function updateSlot(id, data) {
     document.getElementById('p-served').textContent = state.vehiclesServed;
   }
 
-  const cls   = data.error ? 'error' : data.occupied ? 'occupied' : 'free';
-  const icon  = data.error ? '⚠️' : data.occupied ? '🚗' : '🅿';
+  const cls = data.error ? 'error' : data.occupied ? 'occupied' : 'free';
+  const icon = data.error ? '⚠️' : data.occupied ? '🚗' : '🅿';
   const label = data.error ? 'fault' : data.occupied ? 'occupied' : 'free';
-  const ts    = data.timestamp ? new Date(data.timestamp * 1000) : new Date();
-  const timeStr = ts.toLocaleTimeString('en-IN', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+  const ts = data.timestamp ? new Date(data.timestamp * 1000) : new Date();
+  const timeStr = ts.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
   /* Banner slot card */
   const bms = document.getElementById('bms' + id);
@@ -135,10 +135,10 @@ function updateHero() {
   if (!slots.length) return;
 
   const free = slots.filter(s => !s.occupied && !s.error).length;
-  const occ  = slots.filter(s => s.occupied).length;
-  const pct  = Math.round((occ / 4) * 100);
+  const occ = slots.filter(s => s.occupied).length;
+  const pct = Math.round((occ / 4) * 100);
   const freePct = 100 - pct;
-  const now  = new Date().toLocaleTimeString('en-IN', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+  const now = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   const isFull = free === 0;
 
   /* Banner free num */
@@ -281,11 +281,11 @@ function pushCharts(count, label) {
 function startWatchdog() {
   setInterval(() => {
     const stale = Date.now() - state.lastHb > 15000;
-    ['b-dot','p-dot'].forEach(id => {
+    ['b-dot', 'p-dot'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.className = 'dot' + (stale ? ' off' : '');
     });
-    ['b-status','p-status'].forEach(id => {
+    ['b-status', 'p-status'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.textContent = stale ? 'offline' : 'live';
     });
@@ -313,3 +313,141 @@ buildPhoneSlots();
 initCharts();
 startWatchdog();
 attachListeners();
+
+/* ══════════════════════════════════════════════════════════════
+   EXIT PAYMENT — MQTT WebSocket + UPI QR
+══════════════════════════════════════════════════════════════ */
+
+const EXIT_UPI_ID = 'f61579784@oksbi';
+const EXIT_UPI_NAME = 'SmartPark';
+const GATE_OPEN_DELAY_SECS = 30;
+
+let mqttClient = null;
+let exitTimer = null;
+let bQR = null;   // QRCode instance for banner
+let pQR = null;   // QRCode instance for phone
+
+/* ── Connect to HiveMQ via WebSocket ── */
+function initMqtt() {
+  const url = 'wss://706dd0796e994ac0bf5970d78b2f43b1.s1.eu.hivemq.cloud:8884/mqtt';
+  mqttClient = mqtt.connect(url, {
+    username: 'esp32-parking',
+    password: 'IoTesp32Park',
+    clientId: 'dashboard-' + Math.random().toString(16).slice(2, 8),
+    protocolVersion: 5,
+    clean: true,
+    reconnectPeriod: 3000
+  });
+
+  mqttClient.on('connect', () => {
+    console.log('[MQTT-WS] Connected');
+    mqttClient.subscribe('parking/exit/bill', { qos: 0 });
+  });
+
+  mqttClient.on('message', (topic, message) => {
+    if (topic === 'parking/exit/bill') {
+      try {
+        const bill = JSON.parse(message.toString());
+        console.log('[MQTT-WS] Bill received:', bill);
+        showExitBill(bill);
+      } catch (e) { console.error('[MQTT-WS] Parse error:', e); }
+    }
+  });
+
+  mqttClient.on('error', (err) => console.error('[MQTT-WS] Error:', err));
+}
+
+/* ── Build UPI intent URI ── */
+function buildUpiUri(cost, slotNum) {
+  const params = new URLSearchParams({
+    pa: EXIT_UPI_ID,
+    pn: EXIT_UPI_NAME,
+    am: cost.toFixed(2),
+    cu: 'INR',
+    tn: 'Parking Slot ' + slotNum
+  });
+  return 'upi://pay?' + params.toString();
+}
+
+/* ── Show exit bill with QR ── */
+function showExitBill(bill) {
+  const slot = bill.slot || 1;
+  const dur = bill.duration_secs || 0;
+  const cost = bill.cost_inr || 0;
+  const mins = Math.ceil(dur / 60);
+  const upiUri = buildUpiUri(cost, slot);
+
+  // Clear any existing countdown
+  if (exitTimer) clearInterval(exitTimer);
+
+  // Update both banner + phone views
+  ['b', 'p'].forEach(prefix => {
+    const card = document.getElementById(prefix + '-exit-card');
+    const idle = document.getElementById(prefix + '-exit-idle');
+    const active = document.getElementById(prefix + '-exit-active');
+    const slotEl = document.getElementById(prefix + '-exit-slot');
+    const costEl = document.getElementById(prefix + '-exit-cost');
+    const durEl = document.getElementById(prefix + '-exit-dur');
+    const cdEl = document.getElementById(prefix + '-exit-countdown');
+    const qrDiv = document.getElementById(prefix + '-exit-qr');
+
+    if (!card) return;
+
+    // Toggle states
+    card.classList.add('billing');
+    idle.style.display = 'none';
+    active.style.display = 'flex';
+
+    // Fill data
+    slotEl.textContent = 'SLOT 0' + slot;
+    costEl.textContent = '₹' + cost.toFixed(2);
+    durEl.textContent = mins + ' sec · 1paise/sec';
+    cdEl.textContent = 'Gate opens in ' + GATE_OPEN_DELAY_SECS + 's';
+    cdEl.classList.remove('done');
+
+    // Generate QR (clear previous)
+    qrDiv.innerHTML = '';
+    const qrSize = prefix === 'b' ? 140 : 120;
+    if (prefix === 'b') {
+      bQR = new QRCode(qrDiv, {
+        text: upiUri, width: qrSize, height: qrSize,
+        colorDark: '#000', colorLight: '#fff', correctLevel: QRCode.CorrectLevel.M
+      });
+    } else {
+      pQR = new QRCode(qrDiv, {
+        text: upiUri, width: qrSize, height: qrSize,
+        colorDark: '#000', colorLight: '#fff', correctLevel: QRCode.CorrectLevel.M
+      });
+    }
+  });
+
+  // Start countdown → then open gate
+  let remaining = GATE_OPEN_DELAY_SECS;
+  exitTimer = setInterval(() => {
+    remaining--;
+    ['b', 'p'].forEach(prefix => {
+      const cdEl = document.getElementById(prefix + '-exit-countdown');
+      if (!cdEl) return;
+      if (remaining > 0) {
+        cdEl.textContent = 'Gate opens in ' + remaining + 's';
+      } else {
+        cdEl.textContent = '✓ GATE OPENED';
+        cdEl.classList.add('done');
+      }
+    });
+
+    if (remaining <= 0) {
+      clearInterval(exitTimer);
+      exitTimer = null;
+      // Publish gate open command
+      if (mqttClient && mqttClient.connected) {
+        mqttClient.publish('parking/gate/exit/open', JSON.stringify({ action: 'open' }));
+        console.log('[MQTT-WS] Gate open command sent');
+      }
+      // QR stays visible until next bill arrives (per user request)
+    }
+  }, 1000);
+}
+
+/* ── Start MQTT ── */
+initMqtt();

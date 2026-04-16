@@ -52,6 +52,7 @@ const int US_ECHO[] = {  5,  13 };
 #define HEARTBEAT_MS     10000
 #define SERVO_OPEN_DEG      90
 #define SERVO_CLOSE_DEG      0
+#define RATE_PER_SEC  0.01f              // ₹ per minute billing rate
 
 #define US_CALIB_PINGS      10     // pings per slot during boot calibration
 #define US_CALIB_NOISE_CM   50.0f  // readings above this are treated as noise/timeout
@@ -86,6 +87,7 @@ SemaphoreHandle_t dataMutex;
 unsigned long     lastHeartbeat = 0;
 
 float             usThreshold[NUM_SLOTS];  // set by calibrateUS() at boot
+unsigned long     occupiedSince[NUM_SLOTS]; // millis() when car arrived (0 = empty)
 
 // ─────────────────────────────────────────
 //  LED CONTROL — red/green only, no blue
@@ -260,14 +262,40 @@ void mqttReconnect() {
 }
 
 // ─────────────────────────────────────────
-//  PUBLISH SLOT — us field is now real data
+//  PUBLISH COUNT — occupied slots for gate ESP32
+// ─────────────────────────────────────────
+void publishCount(int occCount) {
+  StaticJsonDocument<64> doc;
+  doc["occupied"] = occCount;
+  doc["total"]    = NUM_SLOTS;
+  char buf[64]; serializeJson(doc, buf);
+  mqtt.publish("parking/count", buf, true);   // retained
+  Serial.printf("[MQTT] Count: %s\n", buf);
+}
+
+// ─────────────────────────────────────────
+//  PUBLISH EXIT BILL — when a car leaves
+// ─────────────────────────────────────────
+void publishBill(int slotIndex, unsigned long durationSecs) {
+  float cost = durationSecs * RATE_PER_SEC;
+  StaticJsonDocument<128> doc;
+  doc["slot"]          = slotIndex + 1;
+  doc["duration_secs"] = durationSecs;
+  doc["cost_inr"]      = cost;
+  char buf[128]; serializeJson(doc, buf);
+  mqtt.publish("parking/exit/bill", buf);      // not retained
+  Serial.printf("[MQTT] Bill: %s\n", buf);
+}
+
+// ─────────────────────────────────────────
+//  PUBLISH SLOT — us field is boolean
 // ─────────────────────────────────────────
 void publishSlot(int i, SlotState& s) {
   StaticJsonDocument<160> doc;
   doc["slot"]      = i + 1;
   doc["occupied"]  = s.occupied;
   doc["ir"]        = s.ir;
-  doc["us"]        = s.us;       // real measured distance in cm (0.0 if IR was clear)
+  doc["us"]        = (s.ir && s.us > 0.0f && s.us <= usThreshold[i]);  // true only when US confirms presence
   doc["error"]     = s.error;
   doc["timestamp"] = millis() / 1000;
   char buf[160]; serializeJson(doc, buf);
@@ -333,13 +361,35 @@ void commTask(void* param) {
       xSemaphoreGive(dataMutex);
     }
 
-    // Publish only on state change
+    // Publish only on state change + track occupancy timing
+    bool anyChange = false;
     for (int i = 0; i < NUM_SLOTS; i++) {
       if (localSnap[i].occupied != prevSnap[i].occupied ||
           localSnap[i].error    != prevSnap[i].error) {
+
+        // Car just arrived → record start time
+        if (localSnap[i].occupied && !prevSnap[i].occupied) {
+          occupiedSince[i] = millis();
+        }
+        // Car just left → publish exit bill
+        if (!localSnap[i].occupied && prevSnap[i].occupied && occupiedSince[i] > 0) {
+          unsigned long dur = (millis() - occupiedSince[i]) / 1000;
+          publishBill(i, dur);
+          occupiedSince[i] = 0;
+        }
+
         publishSlot(i, localSnap[i]);
         prevSnap[i] = localSnap[i];
+        anyChange = true;
       }
+    }
+
+    // Publish current count whenever occupancy changes
+    if (anyChange) {
+      int occCount = 0;
+      for (int i = 0; i < NUM_SLOTS; i++)
+        if (localSnap[i].occupied) occCount++;
+      publishCount(occCount);
     }
 
     int freeCount = 0;
@@ -393,6 +443,7 @@ void setup() {
 
   memset(slots,       0, sizeof(slots));
   memset(sharedSlots, 0, sizeof(sharedSlots));
+  memset(occupiedSince, 0, sizeof(occupiedSince));
   dataMutex = xSemaphoreCreateMutex();
 
   // Boot calibration — must run before tasks start; slots must be empty
