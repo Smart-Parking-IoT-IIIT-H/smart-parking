@@ -26,8 +26,8 @@ const char* MQTT_CLIENT = "esp32-gatecontrol-01";
 // ─────────────────────────────────────────
 //  PIN MAP
 // ─────────────────────────────────────────
-#define EXIT_SERVO_PIN    18
-#define EXIT_IR_PIN       5    // <-- Added Exit IR Pin (Update if wired differently)
+#define EXIT_SERVO_PIN    5
+#define EXIT_IR_PIN       18    // <-- Added Exit IR Pin (Update if wired differently)
 
 // ─────────────────────────────────────────
 //  CONSTANTS
