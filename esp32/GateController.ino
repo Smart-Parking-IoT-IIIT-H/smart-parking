@@ -1,8 +1,8 @@
 // ============================================================
-//  GateController.ino — ESP32 Entry/Exit Gate Controller
-//  Subscribes to parking/count + parking/gate/exit/open
-//  Controls 2 servo barriers + 2 IR sensors
-//  Optional OLED status display
+//  GateController.ino — ESP32 Exit Gate Controller
+//  Subscribes to parking/gate/exit/open
+//  Publishes to parking/exit/car/detected
+//  Controls 1 exit servo only
 // ============================================================
 
 #include <WiFi.h>
@@ -12,59 +12,50 @@
 #include <ESP32Servo.h>
 
 // ─────────────────────────────────────────
-//  CONFIG — match these to your SmartParking ESP32
+//  CONFIG
 // ─────────────────────────────────────────
 const char* WIFI_SSID   = "iQOO";
 const char* WIFI_PASS   = "12345678";
-const char* MQTT_HOST   = "706dd0796e994ac0bf5970d78b2f43b1.s1.eu.hivemq.cloud";
+const char* MQTT_HOST   = "6bf52feab0aa462a94eda4f44fdf671c.s1.eu.hivemq.cloud";
 const int   MQTT_PORT   = 8883;
-const char* MQTT_USER   = "esp32-parking";
-const char* MQTT_PASS   = "IoTesp32Park";
+const char* MQTT_USER   = "esp32-park";
+const char* MQTT_PASS   = "IoTesp32-Park";
 const char* MQTT_CLIENT = "esp32-gatecontrol-01";
 
 // ─────────────────────────────────────────
 //  PIN MAP
 // ─────────────────────────────────────────
-#define ENTRY_IR_PIN     19
-#define EXIT_IR_PIN      18
-#define ENTRY_SERVO_PIN   5
-#define EXIT_SERVO_PIN    4
+#define EXIT_SERVO_PIN    18
+#define EXIT_IR_PIN       5    // <-- Added Exit IR Pin (Update if wired differently)
 
 // ─────────────────────────────────────────
 //  CONSTANTS
 // ─────────────────────────────────────────
-#define SERVO_OPEN_DEG    90
-#define SERVO_CLOSE_DEG    0
+#define SERVO_OPEN_DEG      0
+#define SERVO_CLOSE_DEG    90
 #define GATE_HOLD_MS    5000   // keep gate open for 5 seconds
-#define IR_DEBOUNCE_MS   300   // debounce for IR sensors
 
 // ─────────────────────────────────────────
 //  OBJECTS
 // ─────────────────────────────────────────
 WiFiClientSecure  wifiClient;
 PubSubClient      mqtt(wifiClient);
-Servo             entryGate;
 Servo             exitGate;
 
 // ─────────────────────────────────────────
 //  STATE
 // ─────────────────────────────────────────
-volatile int  occupiedCount = 0;
-volatile int  totalSlots    = 2;
-volatile bool exitOpenCmd   = false;   // set by MQTT callback
+volatile bool exitOpenCmd = false;
 
-bool          entryGateOpen = false;
-bool          exitGateOpen  = false;
-unsigned long entryOpenTime = 0;
-unsigned long exitOpenTime  = 0;
-unsigned long lastEntryIR   = 0;       // debounce timestamp
-unsigned long lastExitIR    = 0;
+bool          exitGateOpen = false;
+unsigned long exitOpenTime = 0;
+
+int           lastIrState  = HIGH; // <-- Tracks IR state to prevent MQTT spam
 
 // ─────────────────────────────────────────
-//  MQTT CALLBACK — runs on incoming messages
+//  MQTT CALLBACK
 // ─────────────────────────────────────────
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
-  // Null-terminate payload for parsing
   char msg[256];
   unsigned int copyLen = (length < 255) ? length : 255;
   memcpy(msg, payload, copyLen);
@@ -72,17 +63,6 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 
   Serial.printf("[MQTT-IN] %s: %s\n", topic, msg);
 
-  // ── parking/count ──
-  if (strcmp(topic, "parking/count") == 0) {
-    StaticJsonDocument<64> doc;
-    if (deserializeJson(doc, msg) == DeserializationError::Ok) {
-      occupiedCount = doc["occupied"] | 0;
-      totalSlots    = doc["total"]    | 2;
-      Serial.printf("[GATE] Count updated: %d/%d\n", occupiedCount, totalSlots);
-    }
-  }
-
-  // ── parking/gate/exit/open ──
   if (strcmp(topic, "parking/gate/exit/open") == 0) {
     exitOpenCmd = true;
     Serial.println("[GATE] Exit open command received");
@@ -98,10 +78,8 @@ void mqttReconnect() {
     Serial.print("[MQTT] Connecting...");
     if (mqtt.connect(MQTT_CLIENT, MQTT_USER, MQTT_PASS)) {
       Serial.println(" connected.");
-      // Subscribe to topics
-      mqtt.subscribe("parking/count");
       mqtt.subscribe("parking/gate/exit/open");
-      Serial.println("[MQTT] Subscribed to parking/count, parking/gate/exit/open");
+      Serial.println("[MQTT] Subscribed to parking/gate/exit/open");
     } else {
       Serial.printf(" failed rc=%d\n", mqtt.state());
       delay(3000);
@@ -111,23 +89,8 @@ void mqttReconnect() {
 }
 
 // ─────────────────────────────────────────
-//  OPEN / CLOSE GATE HELPERS
+//  GATE HELPERS
 // ─────────────────────────────────────────
-void openEntryGate() {
-  if (entryGateOpen) return;
-  entryGate.write(SERVO_OPEN_DEG);
-  entryGateOpen = true;
-  entryOpenTime = millis();
-  Serial.println("[GATE] Entry OPEN");
-}
-
-void closeEntryGate() {
-  if (!entryGateOpen) return;
-  entryGate.write(SERVO_CLOSE_DEG);
-  entryGateOpen = false;
-  Serial.println("[GATE] Entry CLOSED");
-}
-
 void openExitGate() {
   if (exitGateOpen) return;
   exitGate.write(SERVO_OPEN_DEG);
@@ -148,25 +111,27 @@ void closeExitGate() {
 // ─────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n=== GateController v1.0 — Entry/Exit ===");
+  Serial.println("\n=== GateController v2.0 — Exit Only ===");
 
-  // IR sensors
-  pinMode(ENTRY_IR_PIN, INPUT);
-  pinMode(EXIT_IR_PIN,  INPUT);
-
-  // Servos
-  entryGate.attach(ENTRY_SERVO_PIN);
   exitGate.attach(EXIT_SERVO_PIN);
-  entryGate.write(SERVO_CLOSE_DEG);
   exitGate.write(SERVO_CLOSE_DEG);
+  Serial.println("[SETUP] Servo attached to pin " + String(EXIT_SERVO_PIN) + ", closed.");
+  
+  pinMode(EXIT_IR_PIN, INPUT);
+  Serial.println("[SETUP] IR sensor on pin " + String(EXIT_IR_PIN) + " ready.");
 
-  // WiFi
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   Serial.print("[WiFi] Connecting");
   while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
-  Serial.printf("\n[WiFi] Connected. IP: %s\n", WiFi.localIP().toString().c_str());
 
-  // MQTT
+  // Force Google DNS to fix ENOTFOUND on restricted networks
+  IPAddress dns(8, 8, 8, 8);
+  WiFi.config(WiFi.localIP(), WiFi.gatewayIP(), WiFi.subnetMask(), dns);
+  delay(500); // let DNS settle
+
+  Serial.printf("\n[WiFi] Connected. IP: %s\n", WiFi.localIP().toString().c_str());
+  Serial.printf("[WiFi] DNS: %s\n", WiFi.dnsIP().toString().c_str());
+
   wifiClient.setInsecure();
   mqtt.setServer(MQTT_HOST, MQTT_PORT);
   mqtt.setKeepAlive(30);
@@ -182,8 +147,8 @@ void setup() {
 //  LOOP
 // ─────────────────────────────────────────
 void loop() {
-  // ── WiFi / MQTT housekeeping ──
   if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[WiFi] Disconnected! Attempting reconnect...");
     WiFi.reconnect();
     delay(5000);
     return;
@@ -193,46 +158,37 @@ void loop() {
 
   unsigned long now = millis();
 
-  // ══════════════════════════════════════
-  //  ENTRY GATE LOGIC
-  // ══════════════════════════════════════
-  bool entryIR = !digitalRead(ENTRY_IR_PIN);   // active-low IR
-
-  if (entryIR && !entryGateOpen && (now - lastEntryIR > IR_DEBOUNCE_MS)) {
-    lastEntryIR = now;
-
-    if (occupiedCount < totalSlots) {
-      // Parking has space → open entry gate
-      openEntryGate();
-      Serial.printf("[ENTRY] Car detected, spots available (%d/%d) → opening\n",
-                    occupiedCount, totalSlots);
-    } else {
-      // Parking full → don't open
-      Serial.printf("[ENTRY] Car detected but FULL (%d/%d) → denied\n",
-                    occupiedCount, totalSlots);
-    }
+  // ─────────────────────────────────────────
+  // EXIT IR SENSOR LOGIC
+  // ─────────────────────────────────────────
+  // Assuming standard LM393 IR module where LOW = object detected
+  int currentIrState = digitalRead(EXIT_IR_PIN);
+  
+  if (currentIrState == LOW && lastIrState == HIGH) {
+    Serial.println("[IR] >>> Car DETECTED at exit (LOW edge)");
+    bool sent = mqtt.publish("parking/exit/car/detected", "true");
+    Serial.println(sent ? "[IR] ✓ Published parking/exit/car/detected" : "[IR] ✗ FAILED to publish!");
   }
-
-  // Auto-close entry gate after hold time
-  if (entryGateOpen && (now - entryOpenTime >= GATE_HOLD_MS)) {
-    closeEntryGate();
+  if (currentIrState == HIGH && lastIrState == LOW) {
+    Serial.println("[IR] Car left exit sensor (HIGH edge)");
   }
+  lastIrState = currentIrState;
 
-  // ══════════════════════════════════════
-  //  EXIT GATE LOGIC
-  // ══════════════════════════════════════
-  // Exit gate opens only when dashboard sends MQTT command
-  // (after QR display + payment timeout)
+  // ─────────────────────────────────────────
+  // EXIT GATE LOGIC
+  // ─────────────────────────────────────────
+  // Opens via MQTT command from dashboard
   if (exitOpenCmd) {
     exitOpenCmd = false;
     openExitGate();
     Serial.println("[EXIT] Gate opening via MQTT command");
   }
 
-  // Auto-close exit gate after hold time
+  // Auto-close after hold time
   if (exitGateOpen && (now - exitOpenTime >= GATE_HOLD_MS)) {
+    Serial.printf("[GATE] Hold time %dms elapsed — auto-closing\n", GATE_HOLD_MS);
     closeExitGate();
   }
 
-  delay(50);   // small loop delay
+  delay(50);
 }

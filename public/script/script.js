@@ -57,7 +57,6 @@ function buildPhoneSlots() {
         <span class="p-tag loading" id="pst${i}">—</span>
       </div>`;
   }
-  /* segs */
   const segs = document.getElementById('p-segs');
   segs.innerHTML = '';
   for (let i = 1; i <= 4; i++) segs.innerHTML += `<div class="p-seg" id="pseg${i}"></div>`;
@@ -87,7 +86,6 @@ function updateSlot(id, data) {
   const ts = data.timestamp ? new Date(data.timestamp * 1000) : new Date();
   const timeStr = ts.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
-  /* Banner slot card */
   const bms = document.getElementById('bms' + id);
   if (bms) {
     bms.className = 'b-slot-card ' + cls;
@@ -101,12 +99,10 @@ function updateSlot(id, data) {
     bmus.className = 'b-slot-sensor ' + (data.us ? 'triggered' : 'clear');
     bmir.textContent = 'IR ' + (data.ir ? '1' : '0');
     bmus.textContent = 'US ' + (data.us ? '1' : '0');
-    /* seg */
     const bseg = document.getElementById('bseg' + id);
     if (bseg) bseg.className = 'b-seg ' + cls;
   }
 
-  /* Phone */
   const pc = document.getElementById('ps' + id);
   if (pc) {
     pc.className = 'p-slot ' + cls;
@@ -137,46 +133,35 @@ function updateHero() {
   const free = slots.filter(s => !s.occupied && !s.error).length;
   const occ = slots.filter(s => s.occupied).length;
   const pct = Math.round((occ / 4) * 100);
-  const freePct = 100 - pct;
   const now = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   const isFull = free === 0;
 
-  /* Banner free num */
   const bf = document.getElementById('b-free');
   bf.textContent = free;
   bf.className = 'b-free-num' + (isFull ? ' zero' : '');
   document.getElementById('b-free-small').textContent = free;
   document.getElementById('b-free-small').style.color = isFull ? 'var(--red)' : 'var(--green)';
 
-  /* Utilization % (occupied) */
   const bPct = document.getElementById('b-pct');
   bPct.textContent = pct + '%';
   bPct.className = 'b-util-pct' + (pct >= 100 ? ' empty' : pct >= 50 ? ' warn' : '');
 
-  /* Hero card glow */
   const heroCard = document.getElementById('b-hero-card');
   heroCard.className = 'b-card b-card-hero' + (isFull ? ' full' : '');
 
-  /* Occ text */
   const occEl = document.getElementById('b-occ-txt');
   occEl.textContent = occ + ' occupied';
   occEl.className = 'accent' + (isFull ? ' zero' : '');
   occEl.style.color = isFull ? 'var(--red)' : 'var(--green)';
 
-  /* Alert */
-  const alertOv = document.getElementById('b-alert-overlay');
-  alertOv.style.display = isFull ? 'flex' : 'none';
-
-  /* Times */
+  document.getElementById('b-alert-overlay').style.display = isFull ? 'flex' : 'none';
   document.getElementById('b-time').textContent = now;
   document.getElementById('b-footer-time').textContent = now;
   document.getElementById('b-last-update').textContent = 'last update: ' + now;
 
-  /* Uptime */
   const uptimeMins = Math.round((Date.now() - state.startTime) / 60000);
   document.getElementById('b-uptime').textContent = uptimeMins + 'm';
 
-  /* Phone */
   const pf = document.getElementById('p-free');
   pf.textContent = free;
   pf.className = 'p-free-big' + (isFull ? ' zero' : '');
@@ -185,10 +170,8 @@ function updateHero() {
   document.getElementById('p-time').textContent = now;
   document.getElementById('p-update').textContent = 'updated ' + now;
   document.getElementById('p-update2').textContent = now;
-  const pheroCard = document.getElementById('p-hero-card');
-  pheroCard.className = 'p-hero' + (isFull ? ' full' : '');
+  document.getElementById('p-hero-card').className = 'p-hero' + (isFull ? ' full' : '');
 
-  /* History */
   state.history.push(occ);
   if (state.history.length > 20) state.history.shift();
   const avg = Math.round((state.history.reduce((a, v) => a + v, 0) / state.history.length / 4) * 100);
@@ -270,7 +253,6 @@ function pushCharts(count, label) {
     c.data.labels.push(label);
     c.data.datasets[0].data.push(count);
     if (c.data.labels.length > 20) { c.data.labels.shift(); c.data.datasets[0].data.shift(); }
-    /* update color based on count */
     const col = count === 4 ? '#ff4466' : count >= 3 ? '#ffbb44' : '#00ff88';
     c.data.datasets[0].borderColor = col;
     c.update('none');
@@ -292,7 +274,7 @@ function startWatchdog() {
   }, 3000);
 }
 
-/* ── Firebase listeners ── */
+/* ── Firebase slot listeners ── */
 function attachListeners() {
   for (let i = 1; i <= 4; i++) {
     const ii = i;
@@ -306,7 +288,7 @@ function attachListeners() {
   });
 }
 
-/* ── Init ── */
+/* ── Init slot UI ── */
 buildBannerMiniSlots();
 buildBannerSegs();
 buildPhoneSlots();
@@ -315,49 +297,254 @@ startWatchdog();
 attachListeners();
 
 /* ══════════════════════════════════════════════════════════════
-   EXIT PAYMENT — MQTT WebSocket + UPI QR
+   EXIT PAYMENT — Firebase Queue (shared across all clients)
+   Flow:
+     ESP32 publishes parking/exit/bill via MQTT
+     → Dashboard JS receives via WebSocket
+     → Pushes bill to Firebase exitQueue/bills
+     → All clients listen to exitQueue/active (same bill, same QR)
+     → Car at exit IR → gateStatus = countdown → all clients sync timer
+     → Gate opens → active cleared → next bill promoted from queue
 ══════════════════════════════════════════════════════════════ */
 
 const EXIT_UPI_ID = 'f61579784@oksbi';
 const EXIT_UPI_NAME = 'SmartPark';
-const GATE_OPEN_DELAY_SECS = 30;
+const PAYMENT_WINDOW_SECS = 15;
+const GATE_HOLD_SECS = 5;
 
 let mqttClient = null;
 let exitTimer = null;
-let bQR = null;   // QRCode instance for banner
-let pQR = null;   // QRCode instance for phone
+let currentActive = null;       // locally tracked active bill (for change detection)
+let isLeader = false;           // true if THIS tab is driving the countdown
 
-/* ── Connect to HiveMQ via WebSocket ── */
-function initMqtt() {
-  const url = 'wss://706dd0796e994ac0bf5970d78b2f43b1.s1.eu.hivemq.cloud:8884/mqtt';
-  mqttClient = mqtt.connect(url, {
-    username: 'esp32-parking',
-    password: 'IoTesp32Park',
-    clientId: 'dashboard-' + Math.random().toString(16).slice(2, 8),
-    protocolVersion: 5,
-    clean: true,
-    reconnectPeriod: 3000
+/* ─────────────────────────────────────────
+   FIREBASE QUEUE HELPERS
+───────────────────────────────────────── */
+
+/* Push a new bill to the Firebase queue, then try to promote */
+function pushBillToFirebase(bill) {
+  bill.timestamp = Math.floor(Date.now() / 1000);
+  // Key = slot + timestamp to allow multiple exits from same slot,
+  // while still deduplicating across multiple browser tabs receiving the same MQTT message
+  const key = 'slot_' + bill.slot + '_' + bill.timestamp;
+  db.ref('exitQueue/bills/' + key).set(bill, (err) => {
+    if (err) {
+      console.error('[QUEUE] Firebase write failed:', err);
+      return;
+    }
+    console.log('[QUEUE] Bill stored in Firebase:', bill);
+    // Only now that the bill is confirmed written, try to promote
+    processFirebaseQueue();
   });
+}
 
-  mqttClient.on('connect', () => {
-    console.log('[MQTT-WS] Connected');
-    mqttClient.subscribe('parking/exit/bill', { qos: 0 });
+/* Promote next bill from queue → active (idempotent — checks first) */
+function processFirebaseQueue() {
+  db.ref('exitQueue/active').once('value', snap => {
+    if (snap.val() !== null) {
+      console.log('[QUEUE] Active bill already exists — skipping promotion');
+      return;
+    }
+    db.ref('exitQueue/bills').limitToFirst(1).once('value', snap => {
+      if (!snap.val()) {
+        console.log('[QUEUE] Queue empty — going idle');
+        showIdleState();
+        return;
+      }
+      const key = Object.keys(snap.val())[0];
+      const bill = snap.val()[key];
+      // Atomically promote to active + remove from queue
+      const updates = {};
+      updates['exitQueue/active'] = bill;
+      updates['exitQueue/bills/' + key] = null;
+      updates['exitQueue/gateStatus'] = 'idle';
+      db.ref().update(updates);
+      console.log('[QUEUE] Promoted bill to active:', bill);
+    });
   });
+}
 
-  mqttClient.on('message', (topic, message) => {
-    if (topic === 'parking/exit/bill') {
-      try {
-        const bill = JSON.parse(message.toString());
-        console.log('[MQTT-WS] Bill received:', bill);
-        showExitBill(bill);
-      } catch (e) { console.error('[MQTT-WS] Parse error:', e); }
+/* ─────────────────────────────────────────
+   FIREBASE LISTENERS — all clients react
+───────────────────────────────────────── */
+
+function attachExitListeners() {
+
+  /* Active bill — render QR on all clients when this changes */
+  db.ref('exitQueue/active').on('value', snap => {
+    const bill = snap.val();
+    if (bill) {
+      const billStr = JSON.stringify(bill);
+      if (billStr !== JSON.stringify(currentActive)) {
+        currentActive = bill;
+        console.log('[ACTIVE] New active bill received:', bill);
+        renderBill(bill);
+      }
+    } else {
+      // Active cleared — go idle
+      if (currentActive !== null) {
+        currentActive = null;
+        showIdleState();
+      }
     }
   });
 
-  mqttClient.on('error', (err) => console.error('[MQTT-WS] Error:', err));
+  /* Queue length — update waiting badge on all clients */
+  db.ref('exitQueue/bills').on('value', snap => {
+    const count = snap.val() ? Object.keys(snap.val()).length : 0;
+    ['b', 'p'].forEach(prefix => {
+      const queueEl = document.getElementById(prefix + '-exit-queue');
+      if (queueEl) {
+        queueEl.textContent = count > 0 ? count + ' waiting' : '';
+        queueEl.style.display = count > 0 ? 'block' : 'none';
+      }
+    });
+  });
+
+  /* Gate status — sync countdown and gate-open state across all clients */
+  db.ref('exitQueue/gateStatus').on('value', snap => {
+    const status = snap.val();
+    console.log('[GATE STATUS]', status);
+
+    if (status === 'countdown' && !exitTimer && currentActive) {
+      // Start countdown on this client (all clients do this simultaneously)
+      startExitCountdown();
+    }
+
+    if (status === 'open') {
+      // Show gate opened on all clients even if they didn't drive the countdown
+      ['b', 'p'].forEach(prefix => {
+        const cdEl = document.getElementById(prefix + '-exit-countdown');
+        if (cdEl) { cdEl.textContent = '✓ GATE OPENED'; cdEl.classList.add('done'); }
+      });
+    }
+
+    if (status === 'idle' || status === null) {
+      // Clear any running timer on this client
+      if (exitTimer) { clearInterval(exitTimer); exitTimer = null; }
+    }
+  });
 }
 
-/* ── Build UPI intent URI ── */
+/* ─────────────────────────────────────────
+   RENDER BILL — show QR + cost on all clients
+───────────────────────────────────────── */
+
+function renderBill(bill) {
+  const slot = bill.slot || 1;
+  const dur = bill.duration_secs || 0;
+  const cost = bill.cost_inr || 0;
+  const upiUri = buildUpiUri(cost, slot);
+
+  // Clear any existing timer
+  if (exitTimer) { clearInterval(exitTimer); exitTimer = null; }
+
+  ['b', 'p'].forEach(prefix => {
+    const card = document.getElementById(prefix + '-exit-card');
+    const idle = document.getElementById(prefix + '-exit-idle');
+    const active = document.getElementById(prefix + '-exit-active');
+    const slotEl = document.getElementById(prefix + '-exit-slot');
+    const costEl = document.getElementById(prefix + '-exit-cost');
+    const durEl = document.getElementById(prefix + '-exit-dur');
+    const cdEl = document.getElementById(prefix + '-exit-countdown');
+    const qrDiv = document.getElementById(prefix + '-exit-qr');
+    const queueEl = document.getElementById(prefix + '-exit-queue');
+
+    if (!card) return;
+
+    card.classList.add('billing');
+    idle.style.display = 'none';
+    active.style.display = 'flex';
+
+    slotEl.textContent = 'SLOT 0' + slot;
+    costEl.textContent = '₹' + cost.toFixed(2);
+    durEl.textContent = dur + ' sec · 1 paise/sec';
+    cdEl.textContent = 'Waiting for car at exit…';
+    cdEl.classList.remove('done');
+
+    // QR code
+    qrDiv.innerHTML = '';
+    const qrSize = prefix === 'b' ? 140 : 120;
+    new QRCode(qrDiv, {
+      text: upiUri, width: qrSize, height: qrSize,
+      colorDark: '#000', colorLight: '#fff',
+      correctLevel: QRCode.CorrectLevel.M
+    });
+  });
+}
+
+/* ─────────────────────────────────────────
+   COUNTDOWN — runs on all clients simultaneously
+   driven by Firebase gateStatus = 'countdown'
+───────────────────────────────────────── */
+
+function startExitCountdown() {
+  if (exitTimer) { clearInterval(exitTimer); exitTimer = null; }
+
+  let remaining = PAYMENT_WINDOW_SECS;
+
+  exitTimer = setInterval(() => {
+    remaining--;
+
+    ['b', 'p'].forEach(prefix => {
+      const cdEl = document.getElementById(prefix + '-exit-countdown');
+      if (!cdEl) return;
+      if (remaining > 0) {
+        cdEl.textContent = 'Pay now · ' + remaining + 's';
+      } else {
+        cdEl.textContent = '✓ GATE OPENED';
+        cdEl.classList.add('done');
+      }
+    });
+
+    if (remaining <= 0) {
+      clearInterval(exitTimer);
+      exitTimer = null;
+
+      // Send gate open command via MQTT
+      if (mqttClient && mqttClient.connected) {
+        mqttClient.publish('parking/gate/exit/open', JSON.stringify({ action: 'open' }));
+        console.log('[MQTT-WS] Gate open command sent');
+      }
+
+      // Update Firebase — mark gate open, then after hold time clear active + promote next
+      db.ref('exitQueue/gateStatus').set('open');
+
+      setTimeout(() => {
+        db.ref('exitQueue/active').remove();
+        db.ref('exitQueue/gateStatus').set('idle');
+        processFirebaseQueue();
+      }, GATE_HOLD_SECS * 1000);
+    }
+  }, 1000);
+}
+
+/* ─────────────────────────────────────────
+   IDLE STATE
+───────────────────────────────────────── */
+
+function showIdleState() {
+  if (exitTimer) { clearInterval(exitTimer); exitTimer = null; }
+
+  ['b', 'p'].forEach(prefix => {
+    const card = document.getElementById(prefix + '-exit-card');
+    const idle = document.getElementById(prefix + '-exit-idle');
+    const active = document.getElementById(prefix + '-exit-active');
+    const queueEl = document.getElementById(prefix + '-exit-queue');
+
+    if (!card) return;
+    card.classList.remove('billing');
+    idle.style.display = 'flex';
+    active.style.display = 'none';
+    if (queueEl) { queueEl.textContent = ''; queueEl.style.display = 'none'; }
+  });
+  console.log('[QUEUE] Idle state shown');
+}
+
+/* ─────────────────────────────────────────
+   UPI URI BUILDER
+───────────────────────────────────────── */
+
 function buildUpiUri(cost, slotNum) {
   const params = new URLSearchParams({
     pa: EXIT_UPI_ID,
@@ -369,85 +556,69 @@ function buildUpiUri(cost, slotNum) {
   return 'upi://pay?' + params.toString();
 }
 
-/* ── Show exit bill with QR ── */
-function showExitBill(bill) {
-  const slot = bill.slot || 1;
-  const dur = bill.duration_secs || 0;
-  const cost = bill.cost_inr || 0;
-  const mins = Math.ceil(dur / 60);
-  const upiUri = buildUpiUri(cost, slot);
+/* ─────────────────────────────────────────
+   MQTT — receive bills + car detection
+───────────────────────────────────────── */
 
-  // Clear any existing countdown
-  if (exitTimer) clearInterval(exitTimer);
+function initMqtt() {
+  const url = 'wss://6bf52feab0aa462a94eda4f44fdf671c.s1.eu.hivemq.cloud:8884/mqtt';
+  mqttClient = mqtt.connect(url, {
+    username: 'esp32-park',
+    password: 'IoTesp32-Park',
+    clientId: 'dashboard-' + Math.random().toString(16).slice(2, 8),
+    protocolVersion: 5,
+    clean: true,
+    reconnectPeriod: 3000
+  });
 
-  // Update both banner + phone views
-  ['b', 'p'].forEach(prefix => {
-    const card = document.getElementById(prefix + '-exit-card');
-    const idle = document.getElementById(prefix + '-exit-idle');
-    const active = document.getElementById(prefix + '-exit-active');
-    const slotEl = document.getElementById(prefix + '-exit-slot');
-    const costEl = document.getElementById(prefix + '-exit-cost');
-    const durEl = document.getElementById(prefix + '-exit-dur');
-    const cdEl = document.getElementById(prefix + '-exit-countdown');
-    const qrDiv = document.getElementById(prefix + '-exit-qr');
+  mqttClient.on('connect', () => {
+    console.log('[MQTT-WS] Connected');
+    mqttClient.subscribe('parking/exit/bill', { qos: 0 });
+    mqttClient.subscribe('parking/exit/car/detected', { qos: 0 });
+  });
 
-    if (!card) return;
+  mqttClient.on('message', (topic, message) => {
 
-    // Toggle states
-    card.classList.add('billing');
-    idle.style.display = 'none';
-    active.style.display = 'flex';
+    /* ── Bill received → push to Firebase queue ── */
+    if (topic === 'parking/exit/bill') {
+      try {
+        const bill = JSON.parse(message.toString());
+        console.log('[MQTT-WS] Bill received:', bill);
+        pushBillToFirebase(bill);      // writes to Firebase, then promotes automatically
+      } catch (e) {
+        console.error('[MQTT-WS] Bill parse error:', e);
+      }
+    }
 
-    // Fill data
-    slotEl.textContent = 'SLOT 0' + slot;
-    costEl.textContent = '₹' + cost.toFixed(2);
-    durEl.textContent = mins + ' sec · 1paise/sec';
-    cdEl.textContent = 'Gate opens in ' + GATE_OPEN_DELAY_SECS + 's';
-    cdEl.classList.remove('done');
-
-    // Generate QR (clear previous)
-    qrDiv.innerHTML = '';
-    const qrSize = prefix === 'b' ? 140 : 120;
-    if (prefix === 'b') {
-      bQR = new QRCode(qrDiv, {
-        text: upiUri, width: qrSize, height: qrSize,
-        colorDark: '#000', colorLight: '#fff', correctLevel: QRCode.CorrectLevel.M
-      });
-    } else {
-      pQR = new QRCode(qrDiv, {
-        text: upiUri, width: qrSize, height: qrSize,
-        colorDark: '#000', colorLight: '#fff', correctLevel: QRCode.CorrectLevel.M
+    /* ── Exit IR triggered → set gateStatus = countdown in Firebase ── */
+    if (topic === 'parking/exit/car/detected') {
+      console.log('[IR] Car detected at exit');
+      db.ref('exitQueue/active').once('value', snap => {
+        if (!snap.val()) {
+          console.log('[IR] No active bill — ignoring car detection');
+          return;
+        }
+        db.ref('exitQueue/gateStatus').once('value', s => {
+          const status = s.val();
+          if (status === 'idle' || status === null) {
+            console.log('[IR] Setting gateStatus = countdown');
+            db.ref('exitQueue/gateStatus').set('countdown');
+          } else {
+            console.log('[IR] gateStatus already', status, '— ignoring');
+          }
+        });
       });
     }
   });
 
-  // Start countdown → then open gate
-  let remaining = GATE_OPEN_DELAY_SECS;
-  exitTimer = setInterval(() => {
-    remaining--;
-    ['b', 'p'].forEach(prefix => {
-      const cdEl = document.getElementById(prefix + '-exit-countdown');
-      if (!cdEl) return;
-      if (remaining > 0) {
-        cdEl.textContent = 'Gate opens in ' + remaining + 's';
-      } else {
-        cdEl.textContent = '✓ GATE OPENED';
-        cdEl.classList.add('done');
-      }
-    });
-
-    if (remaining <= 0) {
-      clearInterval(exitTimer);
-      exitTimer = null;
-      // Publish gate open command
-      if (mqttClient && mqttClient.connected) {
-        mqttClient.publish('parking/gate/exit/open', JSON.stringify({ action: 'open' }));
-        console.log('[MQTT-WS] Gate open command sent');
-      }
-      // QR stays visible until next bill arrives (per user request)
-    }
-  }, 1000);
+  mqttClient.on('error', err => console.error('[MQTT-WS] Error:', err));
+  mqttClient.on('reconnect', () => console.log('[MQTT-WS] Reconnecting…'));
+  mqttClient.on('offline', () => console.log('[MQTT-WS] Offline'));
 }
 
-/* ── Start MQTT ── */
+/* ─────────────────────────────────────────
+   BOOT
+───────────────────────────────────────── */
 initMqtt();
+attachExitListeners();
+processFirebaseQueue();   // recover any active bill on page load/refresh

@@ -1,5 +1,13 @@
 [
     {
+        "id": "766e2989eabb3c74",
+        "type": "tab",
+        "label": "Flow 1",
+        "disabled": false,
+        "info": "",
+        "env": []
+    },
+    {
         "id": "mqtt-in-1",
         "type": "mqtt in",
         "z": "766e2989eabb3c74",
@@ -20,13 +28,162 @@
         ]
     },
     {
+        "id": "json-1",
+        "type": "json",
+        "z": "766e2989eabb3c74",
+        "name": "Parse JSON",
+        "x": 1920,
+        "y": 320,
+        "wires": [
+            [
+                "function-1"
+            ]
+        ]
+    },
+    {
+        "id": "function-1",
+        "type": "function",
+        "z": "766e2989eabb3c74",
+        "name": "Format for Firebase",
+        "func": "if (typeof msg.payload === 'string') {\n    msg.payload = JSON.parse(msg.payload);\n}\n\nconst parts = msg.topic.split(\"/\");\nconst slotId = parts[2];\n\nmsg.payload = {\n    occupied: msg.payload.occupied,\n    ir: msg.payload.ir,\n    us: msg.payload.us,\n    error: msg.payload.error || false,\n    timestamp: Math.floor(Date.now() / 1000)\n};\n\nmsg.url = \"https://smart-parking-1df76-default-rtdb.asia-southeast1.firebasedatabase.app/slots/\" + slotId + \".json\";\nmsg.method = \"PUT\";\nmsg.headers = { \"Content-Type\": \"application/json\" };\n\n// ADD THESE TWO LINES\nmsg.slotId = slotId;\nmsg.occupied = msg.payload.occupied;\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 2120,
+        "y": 320,
+        "wires": [
+            [
+                "d1cc387ef1912269",
+                "a8a1d209077e4c41"
+            ]
+        ]
+    },
+    {
+        "id": "d1cc387ef1912269",
+        "type": "http request",
+        "z": "766e2989eabb3c74",
+        "name": "",
+        "method": "use",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [],
+        "x": 2310,
+        "y": 240,
+        "wires": [
+            [
+                "69ef4e42090ef068"
+            ]
+        ]
+    },
+    {
+        "id": "a8a1d209077e4c41",
+        "type": "function",
+        "z": "766e2989eabb3c74",
+        "name": "function 1",
+        "func": "let slotStates = flow.get('slotStates') || {};\nslotStates[msg.slotId] = msg.occupied;\nflow.set('slotStates', slotStates);\n\nconst allFull = Object.keys(slotStates).length === 4 &&\n                Object.values(slotStates).every(v => v === true);\n\nif (!allFull) return null;\n\nlet subscribers = flow.get('subscribers') || [];\nif (subscribers.length === 0) return null;\n\nmsg.payload = {\n    chatId: subscribers[0],\n    type: 'message',\n    content: '⚠️ SmartPark: Parking lot is FULL — all 4 slots occupied'\n};\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 2320,
+        "y": 360,
+        "wires": [
+            [
+                "971eb4c1bcbcb466"
+            ]
+        ]
+    },
+    {
+        "id": "971eb4c1bcbcb466",
+        "type": "telegram sender",
+        "z": "766e2989eabb3c74",
+        "name": "",
+        "bot": "888701c954acc102",
+        "haserroroutput": false,
+        "outputs": 1,
+        "x": 2510,
+        "y": 420,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "566d1877857d17b5",
+        "type": "telegram receiver",
+        "z": "766e2989eabb3c74",
+        "name": "",
+        "bot": "888701c954acc102",
+        "saveDataDir": "",
+        "filterCommands": false,
+        "hasinput": false,
+        "inputs": 0,
+        "handleallupdates": false,
+        "handleprocessupdates": false,
+        "x": 1730,
+        "y": 480,
+        "wires": [
+            [
+                "48bdaa5445177297"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "48bdaa5445177297",
+        "type": "function",
+        "z": "766e2989eabb3c74",
+        "name": "function 2",
+        "func": "if (msg.payload.content !== '/start') return null;\n\nlet subscribers = flow.get('subscribers') || [];\nconst chatId = msg.payload.chatId;\n\nif (!subscribers.includes(chatId)) {\n    subscribers.push(chatId);\n    flow.set('subscribers', subscribers);\n}\n\nmsg.payload = {\n    chatId: chatId,\n    type: 'message',\n    content: '✅ Subscribed to SmartPark alerts!'\n};\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 2020,
+        "y": 480,
+        "wires": [
+            [
+                "971eb4c1bcbcb466"
+            ]
+        ]
+    },
+    {
+        "id": "69ef4e42090ef068",
+        "type": "debug",
+        "z": "766e2989eabb3c74",
+        "name": "debug 1",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 2500,
+        "y": 240,
+        "wires": []
+    },
+    {
         "id": "hivemq-broker",
         "type": "mqtt-broker",
         "name": "HiveMQ",
-        "broker": "706dd0796e994ac0bf5970d78b2f43b1.s1.eu.hivemq.cloud",
+        "broker": "6bf52feab0aa462a94eda4f44fdf671c.s1.eu.hivemq.cloud",
         "port": "8883",
-        "tls": true,
-        "clientid": "nodered-client",
+        "tls": "",
+        "clientid": "",
         "autoConnect": true,
         "usetls": true,
         "protocolVersion": 4,
@@ -46,5 +203,40 @@
         "willMsg": {},
         "userProps": "",
         "sessionExpiry": ""
+    },
+    {
+        "id": "888701c954acc102",
+        "type": "telegram bot",
+        "botname": "SmartPark Alert",
+        "usernames": "",
+        "chatids": "",
+        "baseapiurl": "",
+        "testenvironment": false,
+        "updatemode": "polling",
+        "pollinterval": 300,
+        "usesocks": false,
+        "sockshost": "",
+        "socksprotocol": "socks5",
+        "socksport": 6667,
+        "socksusername": "anonymous",
+        "sockspassword": "",
+        "bothost": "",
+        "botpath": "",
+        "localbothost": "0.0.0.0",
+        "localbotport": 8443,
+        "publicbotport": 8443,
+        "privatekey": "",
+        "certificate": "",
+        "useselfsignedcertificate": false,
+        "sslterminated": false,
+        "verboselogging": false
+    },
+    {
+        "id": "53658beba285a893",
+        "type": "global-config",
+        "env": [],
+        "modules": {
+            "node-red-contrib-telegrambot": "17.1.3"
+        }
     }
 ]

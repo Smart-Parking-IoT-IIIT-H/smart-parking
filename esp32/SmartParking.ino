@@ -18,10 +18,10 @@
 // ─────────────────────────────────────────
 const char* WIFI_SSID   = "iQOO";
 const char* WIFI_PASS   = "12345678";
-const char* MQTT_HOST   = "706dd0796e994ac0bf5970d78b2f43b1.s1.eu.hivemq.cloud";
+const char* MQTT_HOST   = "6bf52feab0aa462a94eda4f44fdf671c.s1.eu.hivemq.cloud";
 const int   MQTT_PORT   = 8883;
-const char* MQTT_USER   = "esp32-parking";
-const char* MQTT_PASS   = "IoTesp32Park";
+const char* MQTT_USER   = "esp32-park";
+const char* MQTT_PASS   = "IoTesp32-Park";
 const char* MQTT_CLIENT = "esp32-smartpark-01";
 
 // ─────────────────────────────────────────
@@ -50,8 +50,8 @@ const int US_ECHO[] = {  5,  13 };
 #define NUM_SLOTS           2
 #define DEBOUNCE_CONFIRM    3
 #define HEARTBEAT_MS     10000
-#define SERVO_OPEN_DEG      90
-#define SERVO_CLOSE_DEG      0
+#define SERVO_OPEN_DEG       0
+#define SERVO_CLOSE_DEG     90
 #define RATE_PER_SEC  0.01f              // ₹ per minute billing rate
 
 #define US_CALIB_PINGS      10     // pings per slot during boot calibration
@@ -333,7 +333,14 @@ void commTask(void* param) {
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   Serial.print("[WiFi] Connecting");
   while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
+
+  // Force Google DNS to fix ENOTFOUND on restricted networks
+  IPAddress dns(8, 8, 8, 8);
+  WiFi.config(WiFi.localIP(), WiFi.gatewayIP(), WiFi.subnetMask(), dns);
+  delay(500); // let DNS settle
+
   Serial.printf("\n[WiFi] Connected. IP: %s\n", WiFi.localIP().toString().c_str());
+  Serial.printf("[WiFi] DNS: %s\n", WiFi.dnsIP().toString().c_str());
 
   wifiClient.setInsecure();
   mqtt.setServer(MQTT_HOST, MQTT_PORT);
