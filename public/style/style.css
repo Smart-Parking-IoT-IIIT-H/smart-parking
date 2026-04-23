@@ -652,6 +652,7 @@ body::after {
   background: linear-gradient(90deg, var(--muted) 0%, var(--green) 40%, var(--muted) 80%);
   background-size: 200% auto;
   -webkit-background-clip: text;
+  background-clip: text;
   -webkit-text-fill-color: transparent;
   animation: shimmer 4s linear infinite;
 }
@@ -1161,9 +1162,12 @@ body::after {
   line-height: 0;
 }
 
-.exit-qr-wrap canvas,
-.exit-qr-wrap img {
+.exit-qr-wrap canvas {
   display: block !important;
+}
+
+.exit-qr-wrap img {
+  display: none !important;
 }
 
 .exit-cost {
@@ -1197,6 +1201,34 @@ body::after {
   color: var(--green);
   background: rgba(0, 255, 136, .15);
   border-color: rgba(0, 255, 136, .5);
+}
+
+/* UPI deep-link button (phone only) */
+.upi-pay-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-family: var(--display);
+  font-size: .78rem;
+  font-weight: 700;
+  letter-spacing: .06em;
+  color: #1a1a1a;
+  background: linear-gradient(135deg, #ffbb44, #ff9922);
+  padding: 10px 22px;
+  border-radius: 10px;
+  border: none;
+  outline: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: rgba(255, 187, 68, .3);
+  text-decoration: none;
+  box-shadow: 0 0 20px rgba(255, 187, 68, .25), 0 2px 8px rgba(0, 0, 0, .3);
+  transition: transform .15s, box-shadow .15s;
+}
+
+.upi-pay-btn:active {
+  transform: scale(0.96);
+  box-shadow: 0 0 12px rgba(255, 187, 68, .3);
 }
 
 .exit-queue-badge {

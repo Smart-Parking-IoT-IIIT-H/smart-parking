@@ -470,6 +470,11 @@ function renderBill(bill) {
       colorDark: '#000', colorLight: '#fff',
       correctLevel: QRCode.CorrectLevel.M
     });
+
+    // Store UPI URI for deep-link button (phone view)
+    if (prefix === 'p') {
+      window._currentUpiUri = upiUri;
+    }
   });
 }
 
@@ -539,6 +544,24 @@ function showIdleState() {
     if (queueEl) { queueEl.textContent = ''; queueEl.style.display = 'none'; }
   });
   console.log('[QUEUE] Idle state shown');
+}
+
+/* ─────────────────────────────────────────
+   UPI DEEP-LINK (phone button)
+───────────────────────────────────────── */
+
+function openUpi() {
+  if (!window._currentUpiUri) {
+    alert('No active bill to pay');
+    return;
+  }
+  // Programmatic anchor click — most reliable way to trigger custom URL schemes on mobile
+  const a = document.createElement('a');
+  a.href = window._currentUpiUri;
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => document.body.removeChild(a), 500);
 }
 
 /* ─────────────────────────────────────────
