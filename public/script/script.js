@@ -17,8 +17,32 @@ const state = {
   vehiclesServed: 0,
   lastHb: Date.now(),
   history: [],
-  startTime: Date.now()
+  startTime: Date.now(),
+  _booted: false,
+  _wasFull: false
 };
+
+/* ── Toast Notifications ── */
+function showToast(icon, title, msg, type) {
+  if (!state._booted) return;  // suppress on initial load
+  const c = document.getElementById('toast-container');
+  const t = document.createElement('div');
+  t.className = 'toast toast-' + type;
+  const now = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  t.innerHTML = `<span class="toast-icon">${icon}</span>
+    <div class="toast-body">
+      <div class="toast-title">${title}</div>
+      <div class="toast-msg">${msg}</div>
+    </div>
+    <span class="toast-time">${now}</span>`;
+  c.appendChild(t);
+  setTimeout(() => {
+    t.classList.add('removing');
+    setTimeout(() => t.remove(), 300);
+  }, 4000);
+  // Keep max 5 toasts
+  while (c.children.length > 5) c.firstChild.remove();
+}
 
 /* ── Build large slot cards (banner — billboard) ── */
 function buildBannerMiniSlots() {
@@ -78,6 +102,10 @@ function updateSlot(id, data) {
     state.vehiclesServed++;
     document.getElementById('b-served').textContent = state.vehiclesServed;
     document.getElementById('p-served').textContent = state.vehiclesServed;
+    showToast('🚗', 'Car Entered', 'Slot 0' + id + ' is now occupied', 'enter');
+  }
+  if (prev !== null && prev && prev.occupied && !data.occupied) {
+    showToast('🚙', 'Car Exited', 'Slot 0' + id + ' is now free', 'exit');
   }
 
   const cls = data.error ? 'error' : data.occupied ? 'occupied' : 'free';
@@ -155,6 +183,8 @@ function updateHero() {
   occEl.style.color = isFull ? 'var(--red)' : 'var(--green)';
 
   document.getElementById('b-alert-overlay').style.display = isFull ? 'flex' : 'none';
+  if (isFull && !state._wasFull) showToast('🚨', 'Lot Full', 'All parking slots are occupied', 'alert');
+  state._wasFull = isFull;
   document.getElementById('b-time').textContent = now;
   document.getElementById('b-footer-time').textContent = now;
   document.getElementById('b-last-update').textContent = 'last update: ' + now;
@@ -295,6 +325,7 @@ buildPhoneSlots();
 initCharts();
 startWatchdog();
 attachListeners();
+setTimeout(() => { state._booted = true; }, 3000);  // enable toasts after initial load
 
 /* ══════════════════════════════════════════════════════════════
    EXIT PAYMENT — Firebase Queue (shared across all clients)
@@ -412,6 +443,7 @@ function attachExitListeners() {
     }
 
     if (status === 'open') {
+      showToast('✅', 'Gate Opened', 'Exit gate is now open', 'gate');
       // Show gate opened on all clients even if they didn't drive the countdown
       ['b', 'p'].forEach(prefix => {
         const cdEl = document.getElementById(prefix + '-exit-countdown');
@@ -607,6 +639,7 @@ function initMqtt() {
       try {
         const bill = JSON.parse(message.toString());
         console.log('[MQTT-WS] Bill received:', bill);
+        showToast('💰', 'Bill Generated', '₹' + (bill.cost_inr || 0).toFixed(2) + ' · Slot 0' + (bill.slot || 1), 'bill');
         pushBillToFirebase(bill);      // writes to Firebase, then promotes automatically
       } catch (e) {
         console.error('[MQTT-WS] Bill parse error:', e);
@@ -616,6 +649,7 @@ function initMqtt() {
     /* ── Exit IR triggered → set gateStatus = countdown in Firebase ── */
     if (topic === 'parking/exit/car/detected') {
       console.log('[IR] Car detected at exit');
+      showToast('🚧', 'Exit Sensor', 'Car detected at exit gate', 'gate');
       db.ref('exitQueue/active').once('value', snap => {
         if (!snap.val()) {
           console.log('[IR] No active bill — ignoring car detection');
