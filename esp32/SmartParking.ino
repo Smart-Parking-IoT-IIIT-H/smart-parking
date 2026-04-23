@@ -12,6 +12,7 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <ESP32Servo.h>
+#include <ArduinoOTA.h>
 
 // ─────────────────────────────────────────
 //  CONFIG
@@ -179,7 +180,7 @@ void updateOLED(int freeCount) {
 
   // Row 5: firmware label
   oled.setCursor(8, 58);
-  oled.print("SmartPark v1.1");
+  oled.print("SmartPark v2.0-OTA");
 
   oled.display();
 }
@@ -325,6 +326,36 @@ void publishWaitingSlots() {
 }
 
 // ─────────────────────────────────────────
+//  OTA SETUP — called after WiFi connects
+// ─────────────────────────────────────────
+void setupOTA() {
+  ArduinoOTA.setHostname("SmartPark-Main");
+  ArduinoOTA.setPassword("smartpark");
+
+  ArduinoOTA.onStart([]() {
+    Serial.println("[OTA] Update starting...");
+  });
+  ArduinoOTA.onEnd([]() {
+    Serial.println("\n[OTA] Update complete! Rebooting...");
+  });
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    Serial.printf("[OTA] Progress: %u%%\r", (progress * 100) / total);
+  });
+  ArduinoOTA.onError([](ota_error_t error) {
+    Serial.printf("[OTA] Error[%u]: ", error);
+    if      (error == OTA_AUTH_ERROR)    Serial.println("Auth Failed");
+    else if (error == OTA_BEGIN_ERROR)   Serial.println("Begin Failed");
+    else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+    else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+    else if (error == OTA_END_ERROR)     Serial.println("End Failed");
+  });
+
+  ArduinoOTA.begin();
+  Serial.printf("[OTA] Ready. Hostname: SmartPark-Main  IP: %s\n",
+                WiFi.localIP().toString().c_str());
+}
+
+// ─────────────────────────────────────────
 //  COMM TASK — Core 1
 // ─────────────────────────────────────────
 void commTask(void* param) {
@@ -342,6 +373,9 @@ void commTask(void* param) {
   Serial.printf("\n[WiFi] Connected. IP: %s\n", WiFi.localIP().toString().c_str());
   Serial.printf("[WiFi] DNS: %s\n", WiFi.dnsIP().toString().c_str());
 
+  // Initialize OTA after WiFi is connected
+  setupOTA();
+
   wifiClient.setInsecure();
   mqtt.setServer(MQTT_HOST, MQTT_PORT);
   mqtt.setKeepAlive(30);
@@ -357,6 +391,7 @@ void commTask(void* param) {
     }
     if (!mqtt.connected()) mqttReconnect();
     mqtt.loop();
+    ArduinoOTA.handle();   // check for OTA updates each iteration
 
     if (!waitingPublished && mqtt.connected()) {
       publishWaitingSlots();
@@ -423,7 +458,7 @@ void commTask(void* param) {
 // ─────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n=== SmartParking v1.1 — IR + US, 2 slots active ===");
+  Serial.println("\n=== SmartParking v2.0-OTA — IR + US, 2 slots active ===");
 
   for (int i = 0; i < NUM_SLOTS; i++) {
     pinMode(IR[i],          INPUT);
